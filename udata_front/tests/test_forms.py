@@ -41,25 +41,24 @@ class ExtendedRegisterFormTest(GouvfrFrontTestCase):
     @pytest.mark.options(RECAPTCHA_PUBLIC_KEY='test', RECAPTCHA_PRIVATE_KEY='test')
     def test_register_form_invalid_recaptcha(self):
         '''It should return False with an invalid recaptcha.'''
-        def fake_validate_recaptcha(self, form, field):
+        def fake_validate_recaptcha(self, *args, **kwargs):
             raise ValueError('Invalid reCAPTCHA')
         with patch('flask_wtf.recaptcha.RecaptchaField.validate', fake_validate_recaptcha):
-            form = ExtendedRegisterForm.from_json({
-                'email': 'a@a.fr',
-                'first_name': 'first',
-                'last_name': 'last',
-                'password': 'passpass12A',
-                'password_confirm': 'passpass12A',
-                'g-recaptcha-response': 'invalid'
-            })
-            result = form.validate()
-            assert result is False
-            assert 'recaptcha' in form.errors
+            with pytest.raises(ValueError, match='Invalid reCAPTCHA'):
+                form = ExtendedRegisterForm.from_json({
+                    'email': 'a@a.fr',
+                    'first_name': 'first',
+                    'last_name': 'last',
+                    'password': 'passpass12A',
+                    'password_confirm': 'passpass12A',
+                    'g-recaptcha-response': 'invalid'
+                })
+                form.validate()
 
     @pytest.mark.options(RECAPTCHA_PUBLIC_KEY='test', RECAPTCHA_PRIVATE_KEY='test')
     def test_register_form_validated(self):
         '''It should return True with a valid recaptcha.'''
-        def fake_validate_recaptcha(self, form, field):
+        def fake_validate_recaptcha(self, *args, **kwargs):
             return True
         with patch('flask_wtf.recaptcha.RecaptchaField.validate', fake_validate_recaptcha):
             form = ExtendedRegisterForm.from_json({
