@@ -2,25 +2,17 @@ from typing import List
 from udata_front.forms import ExtendedRegisterForm
 from udata_front.tests import GouvFrSettings
 from udata_front.tests.frontend import GouvfrFrontTestCase
+from unittest.mock import patch
 
 import pytest
-
 
 class ExtendedRegisterFormTest(GouvfrFrontTestCase):
     settings = GouvFrSettings
     modules: List[str] = []
-    url = "https://example.com/validation-captchetat"
-    oauth_url = "https://example.com/oauth"
 
     @pytest.fixture(autouse=True)
     def setup(self, rmock):
         self.rmock = rmock
-
-    def oauth_token_url(self):
-        return self.oauth_url + "/api/oauth/token"
-
-    def captchetat_url(self):
-        return self.url + "/valider-captcha"
 
     def test_register_form_required_fields(self):
         form = ExtendedRegisterForm.from_json({
@@ -46,44 +38,37 @@ class ExtendedRegisterFormTest(GouvfrFrontTestCase):
         assert 'first_name' in form.errors
         assert 'last_name' in form.errors
 
-    @pytest.mark.options(CAPTCHETAT_OAUTH_BASE_URL=oauth_url)
-    @pytest.mark.options(CAPTCHETAT_BASE_URL=url)
-    def test_register_form_invalid_captcha(self):
-        '''It should return False with an invalid captcha.'''
-        self.rmock.post(self.oauth_token_url(),
-                        json={"access_token": "some_token", "expires_in": 3600})
-        self.rmock.post(self.captchetat_url(), text="false")
-        form = ExtendedRegisterForm.from_json({
-            'email': 'a@a.fr',
-            'first_name': 'first',
-            'last_name': 'last',
-            'password': 'passpass12A',
-            'password_confirm': 'passpass12A',
-            'captcha_code': 'azerty'
-        })
-        # Set captchetat_uuid data post initialization since its name is actually "captchetat-uuid"
-        form.captchetat_uuid.data = "1230"
-        result = form.validate()
-        assert result is False
-        assert 'captcha_code' in form.errors
+    @pytest.mark.options(RECAPTCHA_PUBLIC_KEY='test', RECAPTCHA_PRIVATE_KEY='test')
+    def test_register_form_invalid_recaptcha(self):
+        '''It should return False with an invalid recaptcha.'''
+        def fake_validate_recaptcha(self, form, field):
+            raise ValueError('Invalid reCAPTCHA')
+        with patch('flask_wtf.recaptcha.RecaptchaField.validate', fake_validate_recaptcha):
+            form = ExtendedRegisterForm.from_json({
+                'email': 'a@a.fr',
+                'first_name': 'first',
+                'last_name': 'last',
+                'password': 'passpass12A',
+                'password_confirm': 'passpass12A',
+                'g-recaptcha-response': 'invalid'
+            })
+            result = form.validate()
+            assert result is False
+            assert 'recaptcha' in form.errors
 
-    @pytest.mark.options(CAPTCHETAT_OAUTH_BASE_URL=oauth_url)
-    @pytest.mark.options(CAPTCHETAT_BASE_URL=url)
+    @pytest.mark.options(RECAPTCHA_PUBLIC_KEY='test', RECAPTCHA_PRIVATE_KEY='test')
     def test_register_form_validated(self):
-        '''It should return True with a valid captcha.'''
-        self.rmock.post(self.oauth_token_url(),
-                        json={"access_token": "some_token", "expires_in": 3600})
-        self.rmock.post(self.captchetat_url(), text="true")
-        form = ExtendedRegisterForm.from_json({
-            'email': 'a@a.fr',
-            'first_name': 'first',
-            'last_name': 'last',
-            'password': 'passpass12A',
-            'password_confirm': 'passpass12A',
-            'captchetat_uuid': '1230',
-            'captcha_code': 'azerty'
-        })
-        # Set captchetat_uuid data post initialization since its name is actually "captchetat-uuid"
-        form.captchetat_uuid.data = "1230"
-        result = form.validate()
-        assert result is True
+        '''It should return True with a valid recaptcha.'''
+        def fake_validate_recaptcha(self, form, field):
+            return True
+        with patch('flask_wtf.recaptcha.RecaptchaField.validate', fake_validate_recaptcha):
+            form = ExtendedRegisterForm.from_json({
+                'email': 'a@a.fr',
+                'first_name': 'first',
+                'last_name': 'last',
+                'password': 'passpass12A',
+                'password_confirm': 'passpass12A',
+                'g-recaptcha-response': 'PASSED'
+            })
+            result = form.validate()
+            assert result is True

@@ -4,11 +4,14 @@ import pytest
 from flask import current_app
 
 from udata.core.dataset.factories import DatasetFactory
-from udata_front import APIGOUVFR_EXTRAS_KEY
+# from udata_front import APIGOUVFR_EXTRAS_KEY
 from udata_front.tests import GouvFrSettings
 from udata_front.tasks import apigouvfr_load_apis
 
-
+APIGOUVFR_EXTRAS_KEY = 'apigouvpt_apis'
+APIGOUVFR_EXPECTED_FIELDS = [
+    'title', 'tagline', 'path', 'slug', 'owner', 'openness', 'logo'
+]
 @pytest.mark.usefixtures('clean_db')
 class ApiGouvFrTasksTest:
     settings = GouvFrSettings
