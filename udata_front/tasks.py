@@ -8,11 +8,15 @@ from udata.commands import success, error
 from udata.core.dataset.models import Dataset
 from udata.tasks import job
 
-from udata_front import (
-    APIGOUVFR_EXTRAS_KEY,
-    APIGOUVFR_EXPECTED_FIELDS,
-)
+# from udata_front import (
+#     APIGOUVFR_EXTRAS_KEY,
+#     APIGOUVFR_EXPECTED_FIELDS,
+# )
 
+APIGOUVFR_EXTRAS_KEY = 'apigouvpt_apis'
+APIGOUVFR_EXPECTED_FIELDS = [
+    'title', 'tagline', 'path', 'slug', 'owner', 'openness', 'logo'
+]
 
 def get_dataset(id_or_slug):
     obj = Dataset.objects(slug=id_or_slug).first()
