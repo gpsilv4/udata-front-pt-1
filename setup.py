@@ -58,6 +58,7 @@ setup(
             'odspt = udata_front.harvesters.odspt:OdsBackendPT',
             'dgt = udata_front.harvesters.dgt:DGTBackend',
             'dgtIne = udata_front.harvesters.dgtIne:DGTINEBackend',
+            'dcat-skip-head = udata_front.harvesters.dcatpt:DcatSkipHeadBackend',
         ],
         'udata.views': [
             'gouvfr_faqs = udata_front.faqs_plugin',
