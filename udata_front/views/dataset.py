@@ -7,7 +7,7 @@ from udata.models import Reuse, Follow
 from udata.core.contact_point.models import CONTACT_ROLES
 from udata.core.dataset.models import Dataset, get_resource
 from udata.core.dataset.constants import RESOURCE_TYPES
-from udata.core.dataset.search import DatasetSearch
+from udata_front.custom_search import CustomDatasetSearch
 from udata.core.dataset.permissions import ResourceEditPermission, DatasetEditPermission
 from udata.core.dataservices.models import Dataservice
 from udata.core.site.models import current_site
@@ -54,7 +54,7 @@ def recent_feed():
 @blueprint.route('/', endpoint='list')
 class DatasetListView(SearchView):
     model = Dataset
-    search_adapter = DatasetSearch
+    search_adapter = CustomDatasetSearch
     context_name = 'datasets'
     template_name = 'dataset/list.html'
 

@@ -111,6 +111,17 @@
                     :isBlue="true"
                   />
                 </div>
+                <div class="fr-col-12">
+                  <MultiSelect
+                    :initialOptions="hvdOptionsPromise"
+                    :placeholder="t('HVDs')"
+                    :searchPlaceholder="t('Search HVDs...')"
+                    :allOption="t('All HVDs')"
+                    :values="facets.hvd"
+                    @change="(value: string) => handleFacetChange('hvd', value)"
+                    :isBlue="true"
+                  />
+                </div>
                 <div class="fr-col-12 fr-mb-3w text-align-center" v-if="isFiltered || downloadLink">
                   <button
                     class="fr-btn fr-btn--secondary fr-icon-close-circle-line fr-btn--icon-left justify-center w-100"
@@ -235,6 +246,7 @@ type Facets = {
   geozone?: string;
   granularity?: string;
   schema?: string;
+  hvd?: string;
 };
 
 const { t } = useI18n();
@@ -254,6 +266,15 @@ const organizationTypes: Array<MultiSelectOption> = getOrganizationTypes()
     value: type.type,
   }));
 const organizationTypesPromise = Promise.resolve(organizationTypes);
+
+/**
+ * HVD options
+ */
+const hvdOptions: Array<MultiSelectOption> = [
+  { label: t('Yes'), value: 'true' },
+  { label: t('No'), value: 'false' },
+];
+const hvdOptionsPromise = Promise.resolve(hvdOptions);
 /**
  * Search query
  */

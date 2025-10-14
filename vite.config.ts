@@ -30,26 +30,44 @@ export function getTheme(): string {
 }
 
 export async function getVersion(version?: string): Promise<string | null> {
-  if(version) {
+  if (version) {
     return version;
   }
+
   const fileName = globSync('*.egg-info/PKG-INFO');
-  if(fileName.length > 0) {
-    const fileStream = fs.createReadStream(fileName[0]);
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    });
-    const pattern = 'Version: ';
-    for await (const line of rl) {
-      if(line.startsWith(pattern)) {
-        version = line.substring(pattern.length);
-        rl.close();
-      }
+  if (fileName.length > 0) {
+    const content = fs.readFileSync(fileName[0], 'utf8');
+    const match = content.match(/^Version:\s*(.+)$/m);
+    if (match) {
+      version = match[1].trim();
     }
   }
+
   return version ?? null;
 }
+
+
+// export async function getVersion(version?: string): Promise<string | null> {
+//   if(version) {
+//     return version;
+//   }
+//   const fileName = globSync('*.egg-info/PKG-INFO');
+//   if(fileName.length > 0) {
+//     const fileStream = fs.createReadStream(fileName[0]);
+//     const rl = readline.createInterface({
+//       input: fileStream,
+//       crlfDelay: Infinity,
+//     });
+//     const pattern = 'Version: ';
+//     for await (const line of rl) {
+//       if(line.startsWith(pattern)) {
+//         version = line.substring(pattern.length);
+//         rl.close();
+//       }
+//     }
+//   }
+//   return version ?? null;
+// }
 
 export async function getConfig(): Promise<UserConfig> {
   const theme = getTheme();
