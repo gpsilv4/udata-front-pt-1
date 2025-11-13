@@ -17,9 +17,6 @@ LABEL "org.opencontainers.image.sources"="https://github.com/opendatateam/docker
 LABEL "org.opencontainers.image.revision"=$REVISION
 LABEL "org.opencontainers.image.created"=$CREATED
 
-# --- REMOVIDO: Correções para repositórios Buster (não são mais necessárias) ---
-
-# --- INSTALAÇÃO DE DEPENDÊNCIAS DO SISTEMA ---
 # Atualiza a lista de pacotes e instala as dependências necessárias.
 # A ordem é importante para evitar conflitos de dependência.
 # Usamos --no-install-recommends para manter a imagem mais pequena.
@@ -52,6 +49,11 @@ COPY requirements/install.pip /tmp/requirements/install.pip
 COPY requirements.pip /tmp/requirements.pip
 RUN pip install -r /tmp/requirements.pip && pip check || pip install -r /tmp/requirements.pip
 
+# Força a atualização das bibliotecas de rede e criptografia para as suas
+# versões mais recentes. Isto é crucial para corrigir bugs de corrupção
+# de memória (ex: "double free" / "signal 6") vistos nos logs.
+RUN pip install --upgrade requests urllib3 pyopenssl cryptography
+
 # Copia o código fonte da aplicação udata e instala-o
 COPY . /tmp/udata_app_source/
 RUN pip install -e /tmp/udata_app_source/
@@ -83,7 +85,6 @@ VOLUME /udata/fs
 # Define a variável de ambiente para o caminho do ficheiro de configurações do udata
 ENV UDATA_SETTINGS=/udata/udata.cfg
 
-# --- ESTA É A CORREÇÃO ---
 # Força o Python a usar o código-fonte montado em /src/gouvfr,
 # resolvendo os conflitos de importação no entrypoint.
 ENV PYTHONPATH="/src/gouvfr:${PYTHONPATH}"
@@ -92,7 +93,5 @@ ENV PYTHONPATH="/src/gouvfr:${PYTHONPATH}"
 # Expõe a porta 7000 do container
 EXPOSE 7000
 
-# --- ALTERADO: Supervisord é agora o ponto de entrada principal ---
-# Não usamos mais ENTRYPOINT porque o Supervisor gerencia os processos
 # O entrypoint.sh será chamado pelo Supervisor para iniciar o uWSGI
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

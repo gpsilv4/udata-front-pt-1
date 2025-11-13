@@ -11,16 +11,40 @@ import re
 from udata.harvest.models import HarvestItem
 from .tools.harvester_utils import normalize_url_slashes
 
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+
+
+class Tls12Adapter(HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_version=ssl.PROTOCOL_TLSv1_2
+        )
+
+
 class INEBackend(BaseBackend):
     display_name = 'Instituto nacional de estatística'
+
+    def __init__(self, source):
+        super().__init__(source)
+        self.session = requests.Session()
+        adapter = Tls12Adapter()
+        self.session.mount('https://', adapter)
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
 
     def inner_harvest(self):
         try:
             from ineDatasets import datasetIds
-        except :
+        except:
             datasetIds = set([])
 
-        req = requests.get(self.source.url)
+        req = self.session.get(self.source.url, timeout=300)
         doc = minidom.parseString(req.content)
 
         properties = doc.getElementsByTagName('indicator')
@@ -30,7 +54,7 @@ class INEBackend(BaseBackend):
             datasetIds.add(currentId)
 
         for dsId in datasetIds:
-            #self.add_item(dsId)
+            # self.add_item(dsId)
             self.process_dataset(dsId)
 
     def inner_process_dataset(self, item: HarvestItem):
@@ -44,7 +68,7 @@ class INEBackend(BaseBackend):
         # https://www.ine.pt/ine/xml_indic_hvd.jsp?opc=3). Prefer the full URL
         # if provided in source.url. Otherwise fall back to the default xml_indic.jsp
         # and allow overriding opc via source.options (if set in the Backend config).
-        base_url = self.source.url 
+        base_url = self.source.url
 
         parsed = urlparse(base_url)
         qs = parse_qs(parsed.query)
@@ -60,7 +84,7 @@ class INEBackend(BaseBackend):
         new_query = urlencode({k: v[0] for k, v in qs.items()})
         final_url = urlunparse(parsed._replace(query=new_query))
 
-        req = requests.get(final_url, headers={'charset': 'utf8'})
+        req = self.session.get(final_url, timeout=300)
 
         returnedData = req.content
         print('Get metadata for %s' % (item.remote_id))
@@ -85,7 +109,8 @@ class INEBackend(BaseBackend):
             # 1) extrair keywords a partir do nó <keywords>
             for kn in target.getElementsByTagName('keywords'):
                 # juntar todos os nós de texto dentro de <keywords>
-                text = ''.join([n.nodeValue or '' for n in kn.childNodes if n.nodeType in (n.TEXT_NODE, n.CDATA_SECTION_NODE)])
+                text = ''.join(
+                    [n.nodeValue or '' for n in kn.childNodes if n.nodeType in (n.TEXT_NODE, n.CDATA_SECTION_NODE)])
                 if text:
                     # split por vírgula, ponto-e-vírgula, barra, ou outros separadores comuns
                     parts = re.split(r'[;,/]|\\s+\\-\\s+|\\s+\\|\\s+', text)
