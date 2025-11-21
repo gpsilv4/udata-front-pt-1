@@ -149,9 +149,9 @@ check_service() {
 
 # Função para coletar métricas do sistema
 collect_system_metrics() {
-    local output_file="${RESULTS_DIR}/system_metrics_${TIMESTAMP}.txt"
+    local output_file="${RESULTS_DIR}/system_metrics_${TIMESTAMP}.log"
     
-    echo -e "${YELLOW}📊 Coletando métricas do sistema...${NC}"
+    echo -e "${YELLOW}📊 Coletando métricas do sistema (local)...${NC}" # Adicionado "(local)" para esclarecer
     
     {
         echo "=== Métricas do Sistema - $(date) ==="
@@ -166,6 +166,8 @@ collect_system_metrics() {
         ps aux | grep uwsgi | grep -v grep || echo "Nenhum processo uWSGI encontrado"
         echo ""
         echo "=== Conexões de Rede ==="
+        # As métricas de rede abaixo são do sistema local onde o script está sendo executado.
+        # Para métricas do sistema remoto, seria necessário SSH ou uma API de monitoramento.
         netstat -an | grep 7000 | wc -l || ss -an | grep 7000 | wc -l
     } > "${output_file}"
     
