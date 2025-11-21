@@ -31,7 +31,8 @@ class INEBackend(BaseBackend):
         # O parsing XML em fluxo da rede pode ser interrompido por timeouts.
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             print('A descarregar XML completo para ficheiro temporário...')
-            req = requests.get(self.source.url, stream=True)
+            req = requests.get(self.source.url, stream=True, timeout=300)
+            req.raise_for_status() # Verifica se o download foi bem-sucedido (status 200)
             req.raw.decode_content = True
             # Copia o conteúdo da resposta HTTP (o XML) para o ficheiro temporário.
             shutil.copyfileobj(req.raw, tmp_file)
@@ -95,9 +96,47 @@ class INEBackend(BaseBackend):
         if elem.find('title') is not None:
             metadata['title'] = elem.find('title').text
 
-        # Extrai a descrição se o elemento 'description' existir.
+        # Extrai a descrição
+        description = ''
         if elem.find('description') is not None:
-            metadata['description'] = elem.find('description').text
+            description = elem.find('description').text or ''
+
+        # Extrai URL adicional do HTML (bdd_url) e anexa à descrição
+        html_node = elem.find('html')
+        if html_node is not None:
+            bdd_url = html_node.find('bdd_url')
+            if bdd_url is not None and bdd_url.text:
+                description += "\n " + bdd_url.text
+        
+        if description:
+            metadata['description'] = description
+
+        # Extrai recursos do JSON
+        resources_data = []
+        json_node = elem.find('json')
+        if json_node is not None:
+            # json_dataset
+            json_dataset = json_node.find('json_dataset')
+            if json_dataset is not None and json_dataset.text:
+                resources_data.append({
+                    'title': 'Dataset json url',
+                    'description': 'Dataset em formato json',
+                    'url': normalize_url_slashes(json_dataset.text),
+                    'filetype': 'remote',
+                    'format': 'json'
+                })
+            # json_metainfo
+            json_metainfo = json_node.find('json_metainfo')
+            if json_metainfo is not None and json_metainfo.text:
+                resources_data.append({
+                    'title': 'Json metainfo url',
+                    'description': 'Metainfo em formato json',
+                    'url': normalize_url_slashes(json_metainfo.text),
+                    'filetype': 'remote',
+                    'format': 'json'
+                })
+        
+        metadata['resources'] = resources_data
 
         keywords = set() # Set para armazenar keywords únicas (tags).
         
@@ -146,6 +185,10 @@ class INEBackend(BaseBackend):
                 dataset.title = kwargs['title']
             if 'description' in kwargs:
                 dataset.description = kwargs['description']
+            
+            if 'resources' in kwargs:
+                for res_data in kwargs['resources']:
+                    dataset.resources.append(Resource(**res_data))
             
             # Garante que a tag 'ine.pt' está presente.
             if 'ine.pt' not in dataset.tags:
@@ -198,6 +241,10 @@ class INEBackend(BaseBackend):
                 dataset.title = metadata['title']
             if 'description' in metadata:
                 dataset.description = metadata['description']
+            
+            if 'resources' in metadata:
+                for res_data in metadata['resources']:
+                    dataset.resources.append(Resource(**res_data))
             target.clear() # Limpa o elemento target após a extração.
         else:
             dataset.tags = [] # Se não encontrou, define tags como vazias.
