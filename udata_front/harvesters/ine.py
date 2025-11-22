@@ -46,14 +46,46 @@ class INEBackend(BaseBackend):
         def save_without_validation(*args, **kwargs):
             # Força validate=False para melhor performance
             kwargs['validate'] = False
+            print(f'[DEBUG] Salvando dataset {remote_id} com validate=False')
             return original_save(*args, **kwargs)
         
         # Substitui o método save do dataset
         dataset.save = save_without_validation
         
         return dataset
-
+    
+    def _process_dataset_with_context(self, app, dataset_id, **metadata):
+        """Wrapper com timing detalhado para diagnóstico."""
+        import time
+        
+        overall_start = time.time()
+        timings = {}
+        
+        with app.app_context():
+            # Timing: process_dataset call (inclui tudo do BaseBackend)
+            t1 = time.time()
+            result = self.process_dataset(dataset_id, **metadata)
+            timings['process_dataset_total'] = time.time() - t1
+            
+        overall_time = time.time() - overall_start
+        timings['overall'] = overall_time
+        
+        # Log detalhado se demorar mais de 2s
+        if overall_time > 2.0:
+            timing_str = ', '.join([f"{k}={v:.2f}s" for k, v in timings.items()])
+            print(f'[SLOW] Dataset {dataset_id}: {timing_str}')
+            
+        return result
+    
     def inner_harvest(self):
+        import time
+        from datetime import datetime
+        
+        harvest_start = time.time()
+        print(f"\n{'='*70}")
+        print(f"[PERFORMANCE] Início do harvest: {datetime.now()}")
+        print(f"{'='*70}\n")
+        
         # Função principal para executar o processo de harvest de todos os datasets.
         # Sobrescreve o método da classe BaseBackend.
         
@@ -67,18 +99,24 @@ class INEBackend(BaseBackend):
 
         # Download para ficheiro temporário para evitar IncompleteRead/Timeouts durante o parsing.
         # O parsing XML em fluxo da rede pode ser interrompido por timeouts.
+        
+        download_start = time.time()
+        print('[PERFORMANCE] A iniciar download do XML...')
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             print('A descarregar XML completo para ficheiro temporário...')
-            req = requests.get(self.source.url, stream=True, timeout=300)
+            req = requests.get(self.source.url, stream=True, timeout=(15, 300))
             req.raise_for_status() # Verifica se o download foi bem-sucedido (status 200)
             req.raw.decode_content = True
             # Copia o conteúdo da resposta HTTP (o XML) para o ficheiro temporário.
             shutil.copyfileobj(req.raw, tmp_file)
             tmp_path = tmp_file.name # Guarda o caminho do ficheiro temporário.
         # tmp_path = '/tmp/ine.xml'
+        download_time = time.time() - download_start
+        print(f'[PERFORMANCE] Download concluído em {download_time:.1f}s')
         print(f'Download concluído. A iniciar parsing de {tmp_path}...')
 
         try:
+            parse_start = time.time()
             # Inicia o parsing XML em fluxo (iterparse) a partir do ficheiro temporário.
             # events=('end',) aciona o evento quando a tag final de um elemento é encontrada.
             context = ET.iterparse(tmp_path, events=('end',))
@@ -107,15 +145,23 @@ class INEBackend(BaseBackend):
                     # Crucial para parsing de ficheiros XML grandes.
                     elem.clear()
             
+            parse_time = time.time() - parse_start
+            print(f'[PERFORMANCE] Parsing concluído em {parse_time:.1f}s')
+            print(f'[PERFORMANCE] Extraídos {len(extracted_items)} datasets do XML')
+            
             # Processa os datasets extraídos em paralelo para melhor performance.
             # Usa ThreadPoolExecutor para processar múltiplos datasets simultaneamente.
-            # IMPORTANTE: Número limitado de workers (3) para evitar contenção no MongoDB.
-            # Mais workers podem causar erros de chave duplicada e degradação de performance.
-            max_workers = 3  # Número de threads paralelas (balanceado entre velocidade e estabilidade)
+            # Limitado a 3 workers devido ao overhead do BaseBackend (8-10s por dataset).
+            # Bypass do BaseBackend causou lock contention (111s por dataset), então mantemos BaseBackend.
+            max_workers = 3  # Balanceado entre performance e estabilidade do MongoDB
             
             # Obtém referência à aplicação Flask antes de criar as threads
             # para que possamos propagar o contexto para cada thread
             app = current_app._get_current_object()
+            
+            process_start = time.time()
+            processed_count = 0
+            checkpoint_interval = 100
             
             print(f'A processar {len(extracted_items)} datasets em paralelo (max {max_workers} workers)...')
             
@@ -131,9 +177,23 @@ class INEBackend(BaseBackend):
                     dataset_id = futures[future]
                     try:
                         future.result()  # Levanta exceção se o processamento falhou
+                        processed_count += 1
+                        
+                        # Checkpoint periódico
+                        if processed_count % checkpoint_interval == 0:
+                            elapsed = time.time() - process_start
+                            rate = processed_count / elapsed if elapsed > 0 else 0
+                            remaining = (len(extracted_items) - processed_count) / rate if rate > 0 else 0
+                            print(f'[CHECKPOINT] {processed_count}/{len(extracted_items)} '
+                                  f'({processed_count/len(extracted_items)*100:.1f}%) - '
+                                  f'Taxa: {rate:.2f} ds/s - '
+                                  f'ETA: {remaining/60:.1f}min')
                     except Exception as e:
                         print(f'Erro ao processar dataset {dataset_id}: {e}')
                         # Continua processando os restantes datasets
+            
+            process_time = time.time() - process_start
+            print(f'[PERFORMANCE] Processamento concluído em {process_time:.1f}s ({process_time/60:.1f}min)')
             
             # Processa quaisquer IDs restantes em datasetIds que NÃO estavam no XML atual.
             # (Útil para datasets que possam ter sido removidos do XML principal,
@@ -239,19 +299,37 @@ class INEBackend(BaseBackend):
         return metadata
 
     def inner_process_dataset(self, item: HarvestItem, **kwargs):
+        import time
+        timings = {}
+        method_start = time.time()
+        
         # Função para processar um dataset individual (item de harvest).
         # Sobrescreve o método da classe BaseBackend.
         
-        dataset = self.get_dataset(item.remote_id) # Obtém ou cria o objeto Dataset no udata.
+        # Rastreamento para diagnóstico
+        if not hasattr(self, '_cached_count'):
+            self._cached_count = 0
+            self._fallback_count = 0
         
+        # Timing: get_dataset
+        t1 = time.time()
+        dataset = self.get_dataset(item.remote_id)
+        timings['get_dataset'] = time.time() - t1
+        
+        # Timing: população de dados
+        t2 = time.time()
         # Define valores por defeito para o dataset.
         dataset.license = License.guess('cc-by') # Licença Creative Commons Atribuição.
         dataset.resources = [] # Inicializa a lista de recursos.
         dataset.frequency = 'unknown' # Define a frequência como desconhecida por defeito.
+        timings['populate_defaults'] = time.time() - t2
 
         # Verificar se os metadados foram passados via kwargs (otimização "Parse Once").
         if 'tags' in kwargs:
+            self._cached_count += 1
             # Temos metadados! Aplica os metadados extraídos previamente no inner_harvest.
+            if self._cached_count <= 5:  # Log apenas os primeiros 5
+                print(f'[CACHED] Dataset {item.remote_id} (cache #{self._cached_count})')
             print(f'A processar metadados para {item.remote_id} (em cache)')
             dataset.tags = kwargs['tags']
             if 'title' in kwargs:
@@ -266,10 +344,20 @@ class INEBackend(BaseBackend):
             # Garante que a tag 'ine.pt' está presente.
             if 'ine.pt' not in dataset.tags:
                 dataset.tags.append('ine.pt')
+            
+            timings['total_method'] = time.time() - method_start
+            
+            # Log se demorou mais de 1s
+            if timings['total_method'] > 1.0:
+                timing_str = ', '.join([f"{k}={v:.3f}s" for k, v in sorted(timings.items())])
+                print(f'[TIMING] inner_process {item.remote_id}: {timing_str}')
+            
             return dataset
 
         # Fallback: Se os metadados não foram fornecidos (kwargs vazios),
         # é necessário fazer download individual do XML para obter as informações.
+        self._fallback_count += 1
+        print(f'[FALLBACK] Dataset {item.remote_id} requer download (fallback #{self._fallback_count})')
         print(f'A obter metadados para {item.remote_id} (a fazer download)')
         
         base_url = self.source.url # URL base do endpoint XML.
