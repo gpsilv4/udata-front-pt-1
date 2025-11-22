@@ -8,12 +8,28 @@ import re
 import tempfile
 import shutil
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from flask import current_app
 
 from udata.harvest.models import HarvestItem
 from .tools.harvester_utils import normalize_url_slashes
 
 class INEBackend(BaseBackend):
     display_name = 'Instituto nacional de estatística'
+
+    def _process_dataset_with_context(self, app, dataset_id, **metadata):
+        """Wrapper para processar dataset dentro do contexto da aplicação Flask.
+        
+        Necessário para threads criadas por ThreadPoolExecutor terem acesso a
+        current_app e outros contextos Flask.
+        
+        Args:
+            app: Instância da aplicação Flask
+            dataset_id: ID do dataset a processar
+            **metadata: Metadados do dataset
+        """
+        with app.app_context():
+            return self.process_dataset(dataset_id, **metadata)
 
     def inner_harvest(self):
         # Função principal para executar o processo de harvest de todos os datasets.
@@ -69,18 +85,53 @@ class INEBackend(BaseBackend):
                     # Crucial para parsing de ficheiros XML grandes.
                     elem.clear()
             
-            # Processa os datasets extraídos (offline, a partir dos metadados em cache).
-            for currentId, metadata in extracted_items:
-                # Chama a função process_dataset (herdada) passando os metadados extraídos.
-                self.process_dataset(currentId, **metadata)
+            # Processa os datasets extraídos em paralelo para melhor performance.
+            # Usa ThreadPoolExecutor para processar múltiplos datasets simultaneamente.
+            # IMPORTANTE: Número limitado de workers (3) para evitar contenção no MongoDB.
+            # Mais workers podem causar erros de chave duplicada e degradação de performance.
+            max_workers = 2  # Número de threads paralelas (balanceado entre velocidade e estabilidade)
+            
+            # Obtém referência à aplicação Flask antes de criar as threads
+            # para que possamos propagar o contexto para cada thread
+            app = current_app._get_current_object()
+            
+            print(f'A processar {len(extracted_items)} datasets em paralelo (max {max_workers} workers)...')
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submete todas as tarefas de processamento com contexto Flask
+                futures = {
+                    executor.submit(self._process_dataset_with_context, app, currentId, **metadata): currentId
+                    for currentId, metadata in extracted_items
+                }
+                
+                # Aguarda conclusão e trata erros individuais
+                for future in as_completed(futures):
+                    dataset_id = futures[future]
+                    try:
+                        future.result()  # Levanta exceção se o processamento falhou
+                    except Exception as e:
+                        print(f'Erro ao processar dataset {dataset_id}: {e}')
+                        # Continua processando os restantes datasets
             
             # Processa quaisquer IDs restantes em datasetIds que NÃO estavam no XML atual.
             # (Útil para datasets que possam ter sido removidos do XML principal,
             # mas ainda existem na lista de IDs pré-existente).
-            for dsId in datasetIds:
-                if dsId not in processed_ids:
-                    # Chama process_dataset sem metadados (obrigará a um download individual/fallback).
-                    self.process_dataset(dsId)
+            remaining_ids = [dsId for dsId in datasetIds if dsId not in processed_ids]
+            
+            if remaining_ids:
+                print(f'A processar {len(remaining_ids)} datasets restantes em paralelo...')
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(self._process_dataset_with_context, app, dsId): dsId
+                        for dsId in remaining_ids
+                    }
+                    
+                    for future in as_completed(futures):
+                        dataset_id = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            print(f'Erro ao processar dataset restante {dataset_id}: {e}')
 
         finally:
             # Bloco finally garante que o ficheiro temporário é apagado, mesmo em caso de erro.
