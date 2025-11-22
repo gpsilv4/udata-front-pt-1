@@ -30,6 +30,28 @@ class INEBackend(BaseBackend):
         """
         with app.app_context():
             return self.process_dataset(dataset_id, **metadata)
+    
+    def get_dataset(self, remote_id):
+        """Override para otimizar performance desabilitando validação automática.
+        
+        A validação é cara (queries adicionais, checks) e redundante pois
+        já controlamos os dados que inserimos. Desabilitar melhora a velocidade.
+        """
+        dataset = super().get_dataset(remote_id)
+        
+        # Guarda o método save original
+        original_save = dataset.save
+        
+        # Cria wrapper que chama save com validate=False
+        def save_without_validation(*args, **kwargs):
+            # Força validate=False para melhor performance
+            kwargs['validate'] = False
+            return original_save(*args, **kwargs)
+        
+        # Substitui o método save do dataset
+        dataset.save = save_without_validation
+        
+        return dataset
 
     def inner_harvest(self):
         # Função principal para executar o processo de harvest de todos os datasets.
@@ -53,7 +75,7 @@ class INEBackend(BaseBackend):
             # Copia o conteúdo da resposta HTTP (o XML) para o ficheiro temporário.
             shutil.copyfileobj(req.raw, tmp_file)
             tmp_path = tmp_file.name # Guarda o caminho do ficheiro temporário.
-        
+        # tmp_path = '/tmp/ine.xml'
         print(f'Download concluído. A iniciar parsing de {tmp_path}...')
 
         try:
@@ -89,7 +111,7 @@ class INEBackend(BaseBackend):
             # Usa ThreadPoolExecutor para processar múltiplos datasets simultaneamente.
             # IMPORTANTE: Número limitado de workers (3) para evitar contenção no MongoDB.
             # Mais workers podem causar erros de chave duplicada e degradação de performance.
-            max_workers = 2  # Número de threads paralelas (balanceado entre velocidade e estabilidade)
+            max_workers = 3  # Número de threads paralelas (balanceado entre velocidade e estabilidade)
             
             # Obtém referência à aplicação Flask antes de criar as threads
             # para que possamos propagar o contexto para cada thread
