@@ -16,6 +16,40 @@ from .tools.harvester_utils import normalize_url_slashes
 
 class INEBackend(BaseBackend):
     display_name = 'Instituto nacional de estatística'
+    
+    def __init__(self, *args, **kwargs):
+        """Inicialização com otimização de save_job.
+        
+        O BaseBackend chama save_job() 2x por dataset, causando overhead O(n²)
+        porque o Job cresce e fica cada vez mais lento de salvar.
+        
+        Solução: Salvar apenas a cada N datasets (batch).
+        """
+        super().__init__(*args, **kwargs)
+        
+        # Configuração do batching
+        self._save_job_counter = 0
+        self._save_job_interval = 10  # Salva a cada 10 datasets
+        self._original_save_job = super().save_job  # Guarda referência ao método original
+        self._last_save_count = 0
+        
+        print(f"[OPTIMIZATION] save_job batching ativado (intervalo: {self._save_job_interval})")
+    
+    def save_job(self):
+        """Override de save_job para batching inteligente.
+        
+        Em vez de salvar o Job a cada dataset (2x!), salva apenas a cada N datasets.
+        Isto elimina o overhead O(n²) onde saves ficam progressivamente mais lentos.
+        """
+        self._save_job_counter += 1
+        
+        # Salva apenas a cada N calls
+        if self._save_job_counter % self._save_job_interval == 0:
+            items_count = len(self.job.items) if hasattr(self, 'job') and self.job else 0
+            print(f"[BATCH_SAVE] Salvando Job (call #{self._save_job_counter}, {items_count} items)...")
+            self._original_save_job()
+            self._last_save_count = items_count
+        # Caso contrário, skip silenciosamente
 
     def _process_dataset_with_context(self, app, dataset_id, **metadata):
         """Wrapper para processar dataset dentro do contexto da aplicação Flask.
@@ -151,9 +185,9 @@ class INEBackend(BaseBackend):
             
             # Processa os datasets extraídos em paralelo para melhor performance.
             # Usa ThreadPoolExecutor para processar múltiplos datasets simultaneamente.
-            # Limitado a 3 workers devido ao overhead do BaseBackend (8-10s por dataset).
-            # Bypass do BaseBackend causou lock contention (111s por dataset), então mantemos BaseBackend.
-            max_workers = 3  # Balanceado entre performance e estabilidade do MongoDB
+            # Limitado a 6 workers devido ao overhead do BaseBackend (logging, etc).
+            # save_job batching eliminou O(n²), então podemos usar mais workers.
+            max_workers = 2  # Balanceado entre performance e estabilidade
             
             # Obtém referência à aplicação Flask antes de criar as threads
             # para que possamos propagar o contexto para cada thread
@@ -161,7 +195,7 @@ class INEBackend(BaseBackend):
             
             process_start = time.time()
             processed_count = 0
-            checkpoint_interval = 100
+            checkpoint_interval = 10
             
             print(f'A processar {len(extracted_items)} datasets em paralelo (max {max_workers} workers)...')
             
@@ -216,9 +250,25 @@ class INEBackend(BaseBackend):
                             print(f'Erro ao processar dataset restante {dataset_id}: {e}')
 
         finally:
+            # Garantir que o Job é salvo no final (pode haver datasets não salvos do último batch)
+            if hasattr(self, 'job') and self.job:
+                items_count = len(self.job.items)
+                print(f"\n[FINAL_SAVE] Salvando estado final do Job ({items_count} items)...")
+                self._original_save_job()  # Força save final
+                
+            harvest_total_time = time.time() - harvest_start
+            print(f"\n{'='*70}")
+            print(f"[PERFORMANCE] Harvest concluído!")
+            print(f"{'='*70}")
+            print(f"Tempo total: {harvest_total_time:.1f}s ({harvest_total_time/60:.1f}min / {harvest_total_time/3600:.1f}h)")
+            if hasattr(self, 'job') and self.job:
+                print(f"Total de items processados: {len(self.job.items)}")
+            print(f"{'='*70}\n")
+            
             # Bloco finally garante que o ficheiro temporário é apagado, mesmo em caso de erro.
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
 
     def _extract_metadata(self, elem):
         # Método auxiliar (privado) para extrair o título, descrição e tags de um elemento XML 'indicator'.
