@@ -223,7 +223,7 @@ class INEBackend(BaseBackend):
             # Copia o conteúdo da resposta HTTP (o XML) para o ficheiro temporário.
             shutil.copyfileobj(req.raw, tmp_file)
             tmp_path = tmp_file.name # Guarda o caminho do ficheiro temporário.
-        # tmp_path = '/tmp/ine.xml'
+        # tmp_path = '/tmp/ine.xml' # teste ficheiro local
         download_time = time.time() - download_start
         print(f'[PERFORMANCE] Download concluído em {download_time:.1f}s')
         print(f'Download concluído. A iniciar parsing de {tmp_path}...')
@@ -408,8 +408,20 @@ class INEBackend(BaseBackend):
         
         metadata['resources'] = resources_data
         
-        # Extrair URLs para comparação (detecção de mudanças)
-        metadata['resource_urls'] = [r['url'] for r in resources_data]
+        # Extrair metadados dos recursos para comparação (detecção de mudanças)
+        # IMPORTANTE: Strip de espaços pois XML pode ter espaços mas MongoDB não
+        # NÃO verificamos filesize (requer HTTP request extra, muito lento)
+        # Mas verificamos: URL, título, descrição, formato
+        metadata['resource_urls'] = [r['url'].strip() for r in resources_data]
+        metadata['resource_metadata'] = [
+            {
+                'url': r['url'].strip(),
+                'title': r['title'],
+                'description': r['description'],
+                'format': r['format']
+            }
+            for r in resources_data
+        ]
 
         keywords = set() # Set para armazenar keywords únicas (tags).
         
@@ -438,6 +450,46 @@ class INEBackend(BaseBackend):
         
         return metadata
     
+    def _normalize_tag(self, tag):
+        """Normaliza uma tag para comparar com o formato salvo no MongoDB.
+        
+        Aplica as mesmas transformações que o MongoDB/udata faz ao salvar:
+        1. Remove acentos: índice -> indice, preços -> precos
+        2. Remove caracteres especiais: 2021) -> 2021, (teste) -> teste
+        3. Remove pontuação: n.º -> n-o, etc.
+        4. Substitui espaços por hífens: mercado de trabalho -> mercado-de-trabalho
+        5. Lowercase (já feito na extração)
+        """
+        import unicodedata
+        import re
+        
+        # Primeiro, substituições explícitas para casos especiais
+        # Ordinais º ª podem não decompor corretamente com NFD
+        tag = tag.replace('º', 'o').replace('ª', 'a')
+        
+        # Remove acentos (normalização NFD + remoção de diacríticos)
+        # NFD decompõe caracteres acentuados em base + acento separado
+        # Categoria 'Mn' (Mark, nonspacing) inclui TODOS os acentos: áéíóú àèìòù âêîôû ãõñ ç etc.
+        # índice → indice, preços → precos, comércio → comercio
+        nfd = unicodedata.normalize('NFD', tag)
+        tag_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+        
+        # Remove caracteres especiais: ), (, etc.
+        # 2021) -> 2021, (teste) -> teste
+        tag_no_special = re.sub(r'[()\[\]{}]', '', tag_no_accents)
+        
+        # Remove pontuação (exceto ponto que vira hífen)
+        # n.o -> n-o (ponto vira hífen)
+        # Primeiro substitui pontos por hífens
+        tag_dots_to_hyphen = tag_no_special.replace('.', '-')
+        # Depois remove outra pontuação
+        tag_no_punct = re.sub(r'[,;:!?"\'`]', '', tag_dots_to_hyphen)
+        
+        # Substitui espaços por hífens
+        tag_normalized = tag_no_punct.replace(' ', '-')
+        
+        return tag_normalized
+    
     def _has_changed(self, dataset, new_metadata):
         """Verifica se o dataset mudou comparando com os novos metadados.
         
@@ -446,31 +498,86 @@ class INEBackend(BaseBackend):
         """
         # Dataset novo sempre processa
         if not dataset.id:
+            print(f'[CHANGE_DEBUG] {dataset.slug or "?"}: NOVO (sem ID)')
             return True
         
         # Comparar título
-        if dataset.title != new_metadata.get('title', ''):
+        old_title = dataset.title or ''
+        new_title = new_metadata.get('title', '')
+        if old_title != new_title:
+            print(f'[CHANGE_DEBUG] {dataset.slug}: Título mudou')
+            print(f'  Antigo: "{old_title[:50]}..."')
+            print(f'  Novo:   "{new_title[:50]}..."')
             return True
         
         # Comparar descrição
         current_desc = dataset.description or ''
         new_desc = new_metadata.get('description', '')
         if current_desc != new_desc:
+            print(f'[CHANGE_DEBUG] {dataset.slug}: Descrição mudou (len: {len(current_desc)} -> {len(new_desc)})')
             return True
         
         # Comparar tags (como sets)
+        # IMPORTANTE: Tags precisam ser normalizadas para comparar corretamente
+        # - Tags do XML têm espaços e acentos: "mercado de trabalho", "índice"
+        # - Tags no MongoDB são: "mercado-de-trabalho", "indice" (sem acentos, hífens)
+        # - Sempre adiciona "ine-pt" ao salvar
         current_tags = set(dataset.tags or [])
-        new_tags = set(new_metadata.get('tags', []))
-        if current_tags != new_tags:
+        
+        # Normalizar tags novas (remover acentos, espaços -> hífens, adicionar ine-pt)
+        raw_tags = new_metadata.get('tags', [])
+        normalized_new_tags = set()
+        for tag in raw_tags:
+            normalized_tag = self._normalize_tag(tag)
+            normalized_new_tags.add(normalized_tag)
+        
+        # Adicionar 'ine-pt' que é sempre adicionado durante o save
+        if 'ine-pt' not in normalized_new_tags:
+            normalized_new_tags.add('ine-pt')
+        
+        if current_tags != normalized_new_tags:
+            added = normalized_new_tags - current_tags
+            removed = current_tags - normalized_new_tags
+            print(f'[CHANGE_DEBUG] {dataset.slug}: Tags mudaram')
+            if added:
+                print(f'  Adicionadas: {list(added)[:3]}')
+            if removed:
+                print(f'  Removidas: {list(removed)[:3]}')
             return True
         
-        # Comparar URLs dos recursos
+        # Comparar recursos (URLs e metadados)
+        # Verifica se URLs mudaram OU se metadados dos recursos mudaram
         current_urls = {r.url for r in dataset.resources}
         new_urls = set(new_metadata.get('resource_urls', []))
+        
         if current_urls != new_urls:
+            added = new_urls - current_urls
+            removed = current_urls - new_urls
+            print(f'[CHANGE_DEBUG] {dataset.slug}: URLs dos recursos mudaram')
+            if added:
+                print(f'  Adicionadas: {list(added)[:2]}')
+            if removed:
+                print(f'  Removidas: {list(removed)[:2]}')
+            return True
+        
+        # Comparar metadados dos recursos (título, descrição, formato)
+        # Cria assinatura dos recursos para comparação
+        current_resource_sig = {
+            (r.url, r.title or '', r.description or '', r.format or '')
+            for r in dataset.resources
+        }
+        new_resource_sig = {
+            (rm['url'], rm['title'], rm['description'], rm['format'])
+            for rm in new_metadata.get('resource_metadata', [])
+        }
+        
+        if current_resource_sig != new_resource_sig:
+            print(f'[CHANGE_DEBUG] {dataset.slug}: Metadados dos recursos mudaram')
+            print(f'  (título, descrição ou formato diferente)')
             return True
         
         # Sem mudanças detectadas
+        print(f'[CHANGE_DEBUG] {dataset.slug}: SEM MUDANÇAS!')
         return False
 
     def inner_process_dataset(self, item: HarvestItem, **kwargs):
