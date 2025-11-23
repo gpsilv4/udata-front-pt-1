@@ -262,7 +262,15 @@ class INEBackend(BaseBackend):
             print(f"{'='*70}")
             print(f"Tempo total: {harvest_total_time:.1f}s ({harvest_total_time/60:.1f}min / {harvest_total_time/3600:.1f}h)")
             if hasattr(self, 'job') and self.job:
-                print(f"Total de items processados: {len(self.job.items)}")
+                total_items = len(self.job.items)
+                skipped = sum(1 for item in self.job.items if item.status == 'skipped')
+                processed = sum(1 for item in self.job.items if item.status == 'done')
+                failed = sum(1 for item in self.job.items if item.status == 'failed')
+                
+                print(f"Total de items processados: {total_items}")
+                print(f"  ├─ Processados: {processed} ({processed/total_items*100:.1f}%)")
+                print(f"  ├─ Pulados (sem mudanças): {skipped} ({skipped/total_items*100:.1f}%)")
+                print(f"  └─ Falhas: {failed} ({failed/total_items*100:.1f}%)")
             print(f"{'='*70}\n")
             
             # Bloco finally garante que o ficheiro temporário é apagado, mesmo em caso de erro.
@@ -320,6 +328,9 @@ class INEBackend(BaseBackend):
                 })
         
         metadata['resources'] = resources_data
+        
+        # Extrair URLs para comparação (detecção de mudanças)
+        metadata['resource_urls'] = [r['url'] for r in resources_data]
 
         keywords = set() # Set para armazenar keywords únicas (tags).
         
@@ -347,9 +358,46 @@ class INEBackend(BaseBackend):
         metadata['tags'] = sorted(keywords)
         
         return metadata
+    
+    def _has_changed(self, dataset, new_metadata):
+        """Verifica se o dataset mudou comparando com os novos metadados.
+        
+        Retorna True se o dataset é novo ou se algum campo mudou.
+        Retorna False se o dataset existe e está idêntico.
+        """
+        # Dataset novo sempre processa
+        if not dataset.id:
+            return True
+        
+        # Comparar título
+        if dataset.title != new_metadata.get('title', ''):
+            return True
+        
+        # Comparar descrição
+        current_desc = dataset.description or ''
+        new_desc = new_metadata.get('description', '')
+        if current_desc != new_desc:
+            return True
+        
+        # Comparar tags (como sets)
+        current_tags = set(dataset.tags or [])
+        new_tags = set(new_metadata.get('tags', []))
+        if current_tags != new_tags:
+            return True
+        
+        # Comparar URLs dos recursos
+        current_urls = {r.url for r in dataset.resources}
+        new_urls = set(new_metadata.get('resource_urls', []))
+        if current_urls != new_urls:
+            return True
+        
+        # Sem mudanças detectadas
+        return False
 
     def inner_process_dataset(self, item: HarvestItem, **kwargs):
         import time
+        from udata.harvest.exceptions import HarvestSkipException
+        
         timings = {}
         method_start = time.time()
         
@@ -360,11 +408,22 @@ class INEBackend(BaseBackend):
         if not hasattr(self, '_cached_count'):
             self._cached_count = 0
             self._fallback_count = 0
+            self._skip_count = 0  # Contador de datasets pulados
         
         # Timing: get_dataset
         t1 = time.time()
         dataset = self.get_dataset(item.remote_id)
         timings['get_dataset'] = time.time() - t1
+        
+        # ====== DETECÇÃO DE MUDANÇAS (Harvest Incremental) ======
+        # Verificar se dataset já existe e se mudou
+        if 'tags' in kwargs:  # Só compara se temos metadados do XML
+            if not self._has_changed(dataset, kwargs):
+                # Dataset existe e não mudou - SKIP!
+                self._skip_count += 1
+                if self._skip_count <= 5:  # Log apenas os primeiros 5 skips
+                    print(f'[SKIP] Dataset {item.remote_id} (sem mudanças, skip #{self._skip_count})')
+                raise HarvestSkipException("sem mudanças nos metadados")
         
         # Timing: população de dados
         t2 = time.time()
