@@ -25,6 +25,17 @@ class INEBackend(BaseBackend):
     TIMEOUT_CONNECT = 15  # segundos (connect timeout)
     TIMEOUT_READ = 300  # segundos (read timeout)
     
+    # Lista de Indicator IDs que são High Value Datasets (HVD)
+    # Estes datasets devem ter as tags 'estatisticas' e 'hvd' adicionadas
+    HVD_INDICATOR_IDS = {
+        "0008259", "0011285", "0011319", "0000105", "0008264", "0004212",
+        "0009822", "0012185", "0006271", "0000108", "0000107", "0000106",
+        "0010415", "0000109", "0008274", "0008273", "0011275", "0000111",
+        "0011989", "0011990", "0011685", "0000110", "0011321", "0011318",
+        "0011260", "0011262", "0000112", "0011907", "0004213", "0008265",
+        "0005715", "0011282", "0012173", "0010735", "0011988", "0005716"
+    }
+    
     def __init__(self, *args, **kwargs):
         """Inicialização com otimização de save_job.
         
@@ -463,9 +474,19 @@ class INEBackend(BaseBackend):
         import unicodedata
         import re
         
+        # Remover espaços no início e fim PRIMEIRO
+        # Evita: " tag" → "-tag" ou "tag " → "tag-"
+        tag = tag.strip()
+        
         # Primeiro, substituições explícitas para casos especiais
         # Ordinais º ª podem não decompor corretamente com NFD
         tag = tag.replace('º', 'o').replace('ª', 'a')
+        
+        # Superscripts: ² ³ → 2 3 (m² → m2)
+        tag = tag.replace('²', '2').replace('³', '3').replace('¹', '1')
+        
+        # Símbolos de moeda: € $ £ → eur usd gbp
+        tag = tag.replace('€', 'eur').replace('$', 'usd').replace('£', 'gbp')
         
         # Remove acentos (normalização NFD + remoção de diacríticos)
         # NFD decompõe caracteres acentuados em base + acento separado
@@ -490,11 +511,16 @@ class INEBackend(BaseBackend):
         
         return tag_normalized
     
-    def _has_changed(self, dataset, new_metadata):
+    def _has_changed(self, dataset, new_metadata, remote_id=None):
         """Verifica se o dataset mudou comparando com os novos metadados.
         
         Retorna True se o dataset é novo ou se algum campo mudou.
         Retorna False se o dataset existe e está idêntico.
+        
+        Args:
+            dataset: Objeto Dataset do MongoDB
+            new_metadata: Metadados extraídos do XML
+            remote_id: ID remoto do dataset (para verificar lista HVD)
         """
         # Dataset novo sempre processa
         if not dataset.id:
@@ -534,6 +560,12 @@ class INEBackend(BaseBackend):
         # Adicionar 'ine-pt' que é sempre adicionado durante o save
         if 'ine-pt' not in normalized_new_tags:
             normalized_new_tags.add('ine-pt')
+        
+        # Adicionar tags HVD se o dataset estiver na lista HVD
+        # (para comparar corretamente com o que será salvo)
+        if remote_id and remote_id in self.HVD_INDICATOR_IDS:
+            normalized_new_tags.add('estatisticas')
+            normalized_new_tags.add('hvd')
         
         if current_tags != normalized_new_tags:
             added = normalized_new_tags - current_tags
@@ -604,7 +636,7 @@ class INEBackend(BaseBackend):
         # ====== DETECÇÃO DE MUDANÇAS (Harvest Incremental) ======
         # Verificar se dataset já existe e se mudou
         if 'tags' in kwargs:  # Só compara se temos metadados do XML
-            if not self._has_changed(dataset, kwargs):
+            if not self._has_changed(dataset, kwargs, item.remote_id):
                 # Dataset existe e não mudou - SKIP!
                 self._skip_count += 1
                 if self._skip_count <= 5:  # Log apenas os primeiros 5 skips
@@ -626,7 +658,17 @@ class INEBackend(BaseBackend):
             if self._cached_count <= 5:  # Log apenas os primeiros 5
                 print(f'[CACHED] Dataset {item.remote_id} (cache #{self._cached_count})')
             print(f'A processar metadados para {item.remote_id} (em cache)')
-            dataset.tags = kwargs['tags']
+            # Define tags: APENAS do XML + 'ine-pt' (nada mais!)
+            xml_tags = kwargs['tags'] or []
+            dataset.tags = xml_tags + ['ine-pt'] if 'ine-pt' not in xml_tags else xml_tags
+            
+            # Adicionar tags HVD se o indicator ID estiver na lista
+            if item.remote_id in self.HVD_INDICATOR_IDS:
+                if 'estatisticas' not in dataset.tags:
+                    dataset.tags.append('estatisticas')
+                if 'hvd' not in dataset.tags:
+                    dataset.tags.append('hvd')
+            
             if 'title' in kwargs:
                 dataset.title = kwargs['title']
             if 'description' in kwargs:
@@ -692,7 +734,17 @@ class INEBackend(BaseBackend):
         if target:
             # Extrai os metadados do elemento.
             metadata = self._extract_metadata(target)
-            dataset.tags = metadata.get('tags', [])
+            # Define tags: APENAS do XML + 'ine-pt' (nada mais!)
+            xml_tags = metadata.get('tags', [])
+            dataset.tags = xml_tags + ['ine-pt'] if 'ine-pt' not in xml_tags else xml_tags
+            
+            # Adicionar tags HVD se o indicator ID estiver na lista
+            if item.remote_id in self.HVD_INDICATOR_IDS:
+                if 'estatisticas' not in dataset.tags:
+                    dataset.tags.append('estatisticas')
+                if 'hvd' not in dataset.tags:
+                    dataset.tags.append('hvd')
+            
             if 'title' in metadata:
                 dataset.title = metadata['title']
             if 'description' in metadata:
