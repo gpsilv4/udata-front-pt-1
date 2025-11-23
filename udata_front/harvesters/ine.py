@@ -10,12 +10,20 @@ import shutil
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import current_app
+import time
 
 from udata.harvest.models import HarvestItem
 from .tools.harvester_utils import normalize_url_slashes
 
 class INEBackend(BaseBackend):
     display_name = 'Instituto nacional de estatística'
+    
+    # Configurações de retry
+    MAX_RETRIES = 5
+    INITIAL_RETRY_DELAY = 2  # segundos
+    MAX_RETRY_DELAY = 60  # segundos
+    TIMEOUT_CONNECT = 15  # segundos (connect timeout)
+    TIMEOUT_READ = 300  # segundos (read timeout)
     
     def __init__(self, *args, **kwargs):
         """Inicialização com otimização de save_job.
@@ -34,6 +42,7 @@ class INEBackend(BaseBackend):
         self._last_save_count = 0
         
         print(f"[OPTIMIZATION] save_job batching ativado (intervalo: {self._save_job_interval})")
+        print(f"[OPTIMIZATION] Retry logic ativado (max {self.MAX_RETRIES} tentativas com backoff exponencial)")
     
     def save_job(self):
         """Override de save_job para batching inteligente.
@@ -50,6 +59,75 @@ class INEBackend(BaseBackend):
             self._original_save_job()
             self._last_save_count = items_count
         # Caso contrário, skip silenciosamente
+    
+    def _make_request_with_retry(self, url, headers=None, stream=True, **kwargs):
+        """Faz requisição HTTP com retry automático e backoff exponencial.
+        
+        Recupera de erros de conexão transientes (SSL, connection reset, timeouts).
+        
+        Args:
+            url: URL para fazer download
+            headers: Headers HTTP opcionais
+            stream: Se True, retorna response em stream
+            **kwargs: Argumentos adicionais para requests.get()
+            
+        Returns:
+            Response object do requests
+            
+        Raises:
+            requests.exceptions.RequestException: Se falhar após todas as tentativas
+        """
+        if headers is None:
+            headers = {}
+        
+        # Define timeout se não fornecido
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = (self.TIMEOUT_CONNECT, self.TIMEOUT_READ)
+        
+        last_exception = None
+        retry_delay = self.INITIAL_RETRY_DELAY
+        
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                print(f'[RETRY] Tentativa {attempt}/{self.MAX_RETRIES} para {url}...')
+                response = requests.get(url, headers=headers, stream=stream, **kwargs)
+                response.raise_for_status()
+                print(f'[RETRY] Sucesso na tentativa {attempt}')
+                return response
+                
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.ChunkedEncodingError,
+                    ConnectionResetError,
+                    ConnectionAbortedError) as e:
+                
+                last_exception = e
+                
+                if attempt < self.MAX_RETRIES:
+                    # Calcula delay com backoff exponencial + jitter
+                    import random
+                    jitter = random.uniform(0, 0.1 * retry_delay)
+                    wait_time = min(retry_delay + jitter, self.MAX_RETRY_DELAY)
+                    
+                    print(f'[RETRY] Erro na tentativa {attempt}: {type(e).__name__}: {str(e)[:100]}')
+                    print(f'[RETRY] Aguardando {wait_time:.1f}s antes de tentar novamente...')
+                    time.sleep(wait_time)
+                    
+                    # Aumenta o delay para a próxima tentativa (backoff exponencial)
+                    retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
+                else:
+                    print(f'[RETRY] Falha na tentativa final {attempt}: {type(e).__name__}')
+                    raise
+            
+            except requests.exceptions.RequestException as e:
+                # Outros erros não são retentáveis
+                print(f'[RETRY] Erro não-retentável: {type(e).__name__}: {str(e)[:100]}')
+                raise
+        
+        # Este código nunca deve ser alcançado, mas por segurança:
+        if last_exception:
+            raise last_exception
+        raise requests.exceptions.RequestException("Falha desconhecida na requisição")
 
     def _process_dataset_with_context(self, app, dataset_id, **metadata):
         """Wrapper para processar dataset dentro do contexto da aplicação Flask.
@@ -138,7 +216,8 @@ class INEBackend(BaseBackend):
         print('[PERFORMANCE] A iniciar download do XML...')
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             print('A descarregar XML completo para ficheiro temporário...')
-            req = requests.get(self.source.url, stream=True, timeout=(15, 300))
+            # Usa retry logic para download com recuperação automática de falhas de conexão
+            req = self._make_request_with_retry(self.source.url, stream=True)
             req.raise_for_status() # Verifica se o download foi bem-sucedido (status 200)
             req.raw.decode_content = True
             # Copia o conteúdo da resposta HTTP (o XML) para o ficheiro temporário.
@@ -484,8 +563,8 @@ class INEBackend(BaseBackend):
         new_query = urlencode({k: v[0] for k, v in qs.items()})
         final_url = urlunparse(parsed._replace(query=new_query))
 
-        # Faz a requisição HTTP para a URL específica do dataset.
-        req = requests.get(final_url, headers={'charset': 'utf8'}, stream=True)
+        # Faz a requisição HTTP para a URL específica do dataset com retry logic.
+        req = self._make_request_with_retry(final_url, headers={'charset': 'utf8'}, stream=True)
         req.raw.decode_content = True
 
         target = None # Variável para armazenar o elemento 'indicator' encontrado.
