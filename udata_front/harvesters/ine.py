@@ -4,6 +4,7 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 import requests
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+import unicodedata
 import re
 import tempfile
 import shutil
@@ -491,45 +492,43 @@ class INEBackend(BaseBackend):
         4. Substitui espaços por hífens: mercado de trabalho -> mercado-de-trabalho
         5. Lowercase (já feito na extração)
         """
-        import unicodedata
-        import re
+        # 1. Substituições Explícitas (Casos Especiais)
+        # Usa um dicionário e um loop for/replace para consolidar ordinais, superscripts e moedas.
         
-        # Remover espaços no início e fim PRIMEIRO
-        # Evita: " tag" → "-tag" ou "tag " → "tag-"
-        tag = tag.strip()
+        substitutions = {
+            # Ordinais
+            'º': 'o', 'ª': 'a',
+            # Superscripts
+            '²': '2', '³': '3', '¹': '1',
+            # Moedas
+            '€': 'eur', '$': 'usd', '£': 'gbp',
+            # Pontuação que deve virar hífen (Ponto)
+            '.': '-', 
+        }
+
+        # Aplica todas as substituições de uma só vez
+        for original, replacement in substitutions.items():
+            tag = tag.replace(original, replacement)
         
-        # Primeiro, substituições explícitas para casos especiais
-        # Ordinais º ª podem não decompor corretamente com NFD
-        tag = tag.replace('º', 'o').replace('ª', 'a')
-        
-        # Superscripts: ² ³ → 2 3 (m² → m2)
-        tag = tag.replace('²', '2').replace('³', '3').replace('¹', '1')
-        
-        # Símbolos de moeda: € $ £ → eur usd gbp
-        tag = tag.replace('€', 'eur').replace('$', 'usd').replace('£', 'gbp')
-        
-        # Remove acentos (normalização NFD + remoção de diacríticos)
-        # NFD decompõe caracteres acentuados em base + acento separado
-        # Categoria 'Mn' (Mark, nonspacing) inclui TODOS os acentos: áéíóú àèìòù âêîôû ãõñ ç etc.
-        # índice → indice, preços → precos, comércio → comercio
+        # 2. Remoção de Acentos (Normalização NFD)
+        # Esta etapa deve vir ANTES da remoção de caracteres especiais para funcionar corretamente.
         nfd = unicodedata.normalize('NFD', tag)
         tag_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
         
-        # Remove caracteres especiais: ), (, etc.
-        # 2021) -> 2021, (teste) -> teste
-        tag_no_special = re.sub(r'[()\[\]{}]', '', tag_no_accents)
+        # 3. Limpeza Final (Remoção de Pontuação Restante e Espaços)
+        # Remove todos os caracteres que não são letras (a-z), números (0-9) ou hífens (-).
+        # O hífen foi introduzido nas etapas 1 e 4.
         
-        # Remove pontuação (exceto ponto que vira hífen)
-        # n.o -> n-o (ponto vira hífen)
-        # Primeiro substitui pontos por hífens
-        tag_dots_to_hyphen = tag_no_special.replace('.', '-')
-        # Depois remove outra pontuação
-        tag_no_punct = re.sub(r'[,;:!?"\'`]', '', tag_dots_to_hyphen)
+        # Remove parênteses, vírgulas, ponto e vírgula, etc.
+        # [^a-z0-9\-] -> tudo o que não for letra, número ou hífen
+        # \s -> substitui quaisquer espaços que restarem (que não foram convertidos em '-')
         
-        # Substitui espaços por hífens
-        tag_normalized = tag_no_punct.replace(' ', '-')
+        tag_cleaned = re.sub(r'[^a-z0-9\-]+', '-', tag_no_accents.lower())
         
-        return tag_normalized
+        # Remove hífens múltiplos (ex: "indicador--de--teste") e hífens nos extremos (ex: -indicador-)
+        tag_final = re.sub(r'-+', '-', tag_cleaned).strip('-')
+
+        return tag_final
     
     def _has_changed(self, dataset, new_metadata, remote_id=None):
         """Verifica se o dataset mudou comparando com os novos metadados.
