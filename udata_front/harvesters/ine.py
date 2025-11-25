@@ -27,14 +27,10 @@ class INEBackend(BaseBackend):
     
     # Lista de Indicator IDs que são High Value Datasets (HVD)
     # Estes datasets devem ter as tags 'estatisticas' e 'hvd' adicionadas
-    HVD_INDICATOR_IDS = {
-        "0008259", "0011285", "0011319", "0000105", "0008264", "0004212",
-        "0009822", "0012185", "0006271", "0000108", "0000107", "0000106",
-        "0010415", "0000109", "0008274", "0008273", "0011275", "0000111",
-        "0011989", "0011990", "0011685", "0000110", "0011321", "0011318",
-        "0011260", "0011262", "0000112", "0011907", "0004213", "0008265",
-        "0005715", "0011282", "0012173", "0010735", "0011988", "0005716"
-    }
+    # Lista de Indicator IDs que são High Value Datasets (HVD)
+    # Estes datasets devem ter as tags 'estatisticas' e 'hvd' adicionadas
+    # Preenchido dinamicamente em inner_harvest
+    HVD_INDICATOR_IDS = set()
     
     def __init__(self, *args, **kwargs):
         """Inicialização com otimização de save_job.
@@ -200,9 +196,33 @@ class INEBackend(BaseBackend):
             
         return result
     
+    def _fetch_hvd_ids(self):
+        """Fetch HVD Indicator IDs from INE XML endpoint."""
+        url = "https://www.ine.pt/ine/xml_indic_hvd.jsp?opc=3&lang=PT"
+        print(f"[HVD] Fetching HVD IDs from {url}...")
+        try:
+            # Use existing retry logic
+            response = self._make_request_with_retry(url, timeout=30)
+            
+            # Parse XML
+            root = ET.fromstring(response.content)
+            ids = set()
+            for indicator in root.findall('.//indicator'):
+                if 'id' in indicator.attrib:
+                    ids.add(indicator.attrib['id'])
+            
+            print(f"[HVD] Loaded {len(ids)} HVD IDs")
+            return ids
+        except Exception as e:
+            print(f"[HVD] Error fetching HVD IDs: {e}")
+            return set()
+
     def inner_harvest(self):
         import time
         from datetime import datetime
+        
+        # Carrega IDs HVD dinamicamente no início do harvest
+        self.HVD_INDICATOR_IDS = self._fetch_hvd_ids()
         
         harvest_start = time.time()
         print(f"\n{'='*70}")
