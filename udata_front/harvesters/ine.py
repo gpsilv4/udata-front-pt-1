@@ -1,13 +1,21 @@
 from datetime import datetime
-from xml.dom import minidom, Node
 import requests
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import lxml.etree as etree
+import logging
+import os
 
 from udata.models import db, Resource, License
 from udata.harvest.backends.base import BaseBackend
-from udata.harvest.models import HarvestItem
+from udata.harvest.models import HarvestItem, HarvestError
+from udata.harvest.exceptions import HarvestSkipException
 from .tools.harvester_utils import normalize_url_slashes
+from flask import current_app
+
+log = logging.getLogger(__name__)
 
 PERIODICITY_MAP = {
     'anual': 'annual',
@@ -46,34 +54,62 @@ class INEBackend(BaseBackend):
         self.session = requests.Session()
         self._indicator_cache = {}
         self._catalog_extras = {}
+        self._lock = threading.Lock()
 
     def _get_text(self, node):
-        if not node:
+        if node is None:
             return ''
-        return ''.join([n.nodeValue or '' for n in node.childNodes
-                        if n.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE)]).strip()
+        return "".join(node.itertext()).strip()
 
     def _parse_xml(self, content):
         if not content:
             return None
-        if isinstance(content, bytes):
-            try:
-                text = content.decode('utf-8')
-            except UnicodeDecodeError:
-                text = content.decode('latin-1')
-        else:
-            text = content
+        if isinstance(content, str):
+            content = content.encode('utf-8')
 
-        # Strip leading non-XML text (like browser warnings)
-        text = text.strip()
-        if not text.startswith('<'):
-            text = re.sub(r'^[^<]+', '', text).strip()
+        # Strip leading non-XML text if any
+        if not content.strip().startswith(b'<'):
+             content = re.sub(rb'^[^<]+', b'', content).strip()
 
         try:
-            return minidom.parseString(text)
+            return etree.fromstring(content)
         except Exception as e:
-            print(f"Error parsing XML: {e}")
+            log.error(f"Error parsing XML: {e}")
             return None
+
+    def process_dataset(self, remote_id, **kwargs):
+        """Process dataset data without saving to MongoDB.
+        Returns (HarvestItem, Dataset) tuple for later batch saving.
+        """
+        item = HarvestItem(status="started", started=datetime.utcnow(), remote_id=remote_id)
+        dataset = None
+
+        try:
+            if not remote_id:
+                raise HarvestSkipException("missing identifier")
+
+            dataset = self.inner_process_dataset(item, **kwargs)
+
+            dataset.harvest = self.update_dataset_harvest_info(dataset.harvest, item.remote_id)
+            dataset.archived = None
+
+            # Only validate during dryrun, don't save yet
+            if self.dryrun:
+                dataset.validate()
+            
+            item.dataset = dataset
+            item.status = "done"
+        except HarvestSkipException as e:
+            item.status = "skipped"
+            item.errors.append(HarvestError(message=str(e)))
+        except Exception as e:
+            item.status = "failed"
+            import traceback
+            item.errors.append(HarvestError(message=str(e), details=traceback.format_exc()))
+        finally:
+            item.ended = datetime.utcnow()
+        
+        return (item, dataset)
 
     def inner_harvest(self):
         try:
@@ -91,30 +127,81 @@ class INEBackend(BaseBackend):
             return
 
         doc = self._parse_xml(req.content)
-        if not doc:
+        if doc is None:
             return
 
         # Pre-populate cache to avoid re-fetching in inner_process_dataset
         self._indicator_cache = {}
-        for propNode in doc.getElementsByTagName('indicator'):
-            currentId = propNode.getAttribute('id')
+        for propNode in doc.xpath('//indicator'):
+            currentId = propNode.get('id')
             if currentId:
                 self._indicator_cache[str(currentId)] = propNode
                 datasetIds.add(currentId)
 
         # Store catalog-level info
         self._catalog_extras = {}
-        lang_nodes = doc.getElementsByTagName('language')
+        lang_nodes = doc.xpath('//language')
         if lang_nodes:
             self._catalog_extras['language'] = self._get_text(lang_nodes[0])
             
-        extract_nodes = doc.getElementsByTagName('extraction_date')
+        extract_nodes = doc.xpath('//extraction_date')
         if extract_nodes:
             self._catalog_extras['extraction_date'] = self._get_text(extract_nodes[0])
 
         print(f"Found {len(datasetIds)} indicators to process")
-        for dsId in datasetIds:
-            self.process_dataset(dsId)
+        
+        # Parallel processing
+        workers = 50  # High parallelism for data processing (no DB writes here)
+        try:
+            # Try to get workers from config if available
+            config_workers = self.get_extra_config_value('workers')
+            if config_workers:
+                workers = int(config_workers)
+        except:
+            pass
+            
+        print(f"Starting ThreadPoolExecutor with {workers} workers for parallel data processing")
+        app = current_app._get_current_object()
+
+        from concurrent.futures import as_completed
+        
+        results = []  # Collect all (item, dataset) tuples
+
+        def process_with_context(dsId):
+            with app.app_context():
+                return self.process_dataset(dsId)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all tasks
+            futures = {executor.submit(process_with_context, dsId): dsId for dsId in datasetIds}
+            
+            # Collect results as they finish
+            for future in as_completed(futures):
+                results.append(future.result())
+                if len(results) % 50 == 0:
+                    print(f"Processed {len(results)}/{len(datasetIds)} datasets (data ready, pending save)...")
+
+        # Now save datasets sequentially (avoid MongoDB contention)
+        print(f"Saving {len(results)} datasets to MongoDB...")
+        saved_count = 0
+        for item, dataset in results:
+            if dataset and item.status == "done" and not self.dryrun:
+                try:
+                    dataset.save()
+                    saved_count += 1
+                    if saved_count % 50 == 0:
+                        print(f"Saved {saved_count} datasets...")
+                except Exception as e:
+                    item.status = "failed"
+                    import traceback
+                    item.errors.append(HarvestError(message=str(e), details=traceback.format_exc()))
+            
+            self.job.items.append(item)
+
+        # Final save of harvest job
+        self.save_job()
+        print(f"Harvest complete. Total processed: {len(results)}, Saved: {saved_count}")
+        print("inner_harvest() finished. Base harvest() will now run autoarchive if enabled...")
 
     def inner_process_dataset(self, item: HarvestItem):
         '''Return the INE datasets'''
@@ -151,24 +238,24 @@ class INEBackend(BaseBackend):
                 return dataset
 
             if doc:
-                properties = doc.getElementsByTagName('indicator')
+                properties = doc.xpath('//indicator')
                 for propNode in properties:
-                    if propNode.hasAttribute('id') and str(propNode.getAttribute('id')) == str(item.remote_id):
+                    if propNode.get('id') == str(item.remote_id):
                         target = propNode
                         break
-                if not target:
+                if target is None:
                     target = properties[0] if properties else None
 
-        if not target:
+        if target is None:
             return dataset
 
 
         # 1. Title and Description
-        title_node = target.getElementsByTagName('title')
+        title_node = target.xpath('./title')
         if title_node:
             dataset.title = self._get_text(title_node[0])
 
-        desc_node = target.getElementsByTagName('description')
+        desc_node = target.xpath('./description')
         if desc_node:
             dataset.description = self._get_text(desc_node[0])
 
@@ -177,7 +264,7 @@ class INEBackend(BaseBackend):
 
         # 3. Frequency / Periodicity
         dataset.frequency = 'unknown'
-        periodicity_node = target.getElementsByTagName('periodicity')
+        periodicity_node = target.xpath('./periodicity')
         if periodicity_node:
             p_text = self._get_text(periodicity_node[0]).lower()
             mapped = PERIODICITY_MAP.get(p_text, 'unknown')
@@ -187,7 +274,7 @@ class INEBackend(BaseBackend):
                 dataset.frequency = 'unknown'
 
         # 4. Modified Date
-        update_node = target.getElementsByTagName('last_update')
+        update_node = target.xpath('./last_update')
         if update_node:
             u_text = self._get_text(update_node[0])
             try:
@@ -199,7 +286,7 @@ class INEBackend(BaseBackend):
         keywordSet = set()
 
         # Keywords element
-        for kn in target.getElementsByTagName('keywords'):
+        for kn in target.xpath('./keywords'):
             text = self._get_text(kn)
             if text:
                 parts = re.split(r'[;,/]|\s+-\s+|\s+\|\s+', text)
@@ -210,14 +297,14 @@ class INEBackend(BaseBackend):
 
         # Theme and Subtheme
         for tagname in ('theme', 'subtheme'):
-            for tn in target.getElementsByTagName(tagname):
+            for tn in target.xpath(f'./{tagname}'):
                 val = self._get_text(tn)
                 if val:
                     keywordSet.add(val.lower())
 
         # Source and Geo level
         for tagname in ('source', 'geo_lastlevel'):
-            for tn in target.getElementsByTagName(tagname):
+            for tn in target.xpath(f'./{tagname}'):
                 val = self._get_text(tn)
                 if val:
                     keywordSet.add(val.lower())
@@ -233,11 +320,11 @@ class INEBackend(BaseBackend):
         language = None
         extraction_date = None
         
-        if doc:
-            lang_nodes = doc.getElementsByTagName('language')
+        if doc is not None:
+            lang_nodes = doc.xpath('//language')
             if lang_nodes:
                 language = self._get_text(lang_nodes[0])
-            extract_nodes = doc.getElementsByTagName('extraction_date')
+            extract_nodes = doc.xpath('//extraction_date')
             if extract_nodes:
                 extraction_date = self._get_text(extract_nodes[0])
         
@@ -252,15 +339,15 @@ class INEBackend(BaseBackend):
             dataset.extras['ine:extraction_date'] = extraction_date
 
         # Indicator level info
-        varcd_node = target.getElementsByTagName('varcd')
+        varcd_node = target.xpath('./varcd')
         if varcd_node:
             dataset.extras['ine:varcd'] = self._get_text(varcd_node[0])
 
-        last_period = target.getElementsByTagName('last_period_available')
+        last_period = target.xpath('./last_period_available')
         if last_period:
             dataset.extras['ine:last_period_available'] = self._get_text(last_period[0])
             
-        update_type = target.getElementsByTagName('update_type')
+        update_type = target.xpath('./update_type')
         if update_type:
             dataset.extras['ine:update_type'] = self._get_text(update_type[0])
 
@@ -268,10 +355,10 @@ class INEBackend(BaseBackend):
         dataset.resources = []
 
         # HTML URLs
-        html_nodes = target.getElementsByTagName('html')
+        html_nodes = target.xpath('./html')
         if html_nodes:
             # BDD URL
-            bdd_url_node = html_nodes[0].getElementsByTagName('bdd_url')
+            bdd_url_node = html_nodes[0].xpath('./bdd_url')
             if bdd_url_node:
                 dataset.resources.append(Resource(
                     title='Página do indicador (HTML)',
@@ -281,7 +368,7 @@ class INEBackend(BaseBackend):
                     format='html'
                 ))
             # Metainfo URL
-            meta_url_node = html_nodes[0].getElementsByTagName('metainfo_url')
+            meta_url_node = html_nodes[0].xpath('./metainfo_url')
             if meta_url_node:
                 dataset.resources.append(Resource(
                     title='Metainformação (HTML)',
@@ -292,10 +379,10 @@ class INEBackend(BaseBackend):
                 ))
 
         # JSON URLs
-        json_nodes = target.getElementsByTagName('json')
+        json_nodes = target.xpath('./json')
         if json_nodes:
             # JSON Dataset
-            json_ds_node = json_nodes[0].getElementsByTagName('json_dataset')
+            json_ds_node = json_nodes[0].xpath('./json_dataset')
             if json_ds_node:
                 dataset.resources.append(Resource(
                     title='Dados do indicador (JSON)',
@@ -305,7 +392,7 @@ class INEBackend(BaseBackend):
                     format='json'
                 ))
             # JSON Metainfo
-            json_meta_node = json_nodes[0].getElementsByTagName('json_metainfo')
+            json_meta_node = json_nodes[0].xpath('./json_metainfo')
             if json_meta_node:
                 dataset.resources.append(Resource(
                     title='Metainformação (JSON)',
