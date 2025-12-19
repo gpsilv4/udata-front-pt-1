@@ -191,7 +191,7 @@ class INEHvdBackend(BaseBackend):
     def map_frequency(self, text):
         '''
         Maps the Portuguese frequency text (e.g., 'Mensal', 'Anual') to the
-        internal uData controlled vocabulary (e.g., 'monthly', 'annual').
+        internal uData controlled vocabulary.
         Returns 'unknown' if no match is found.
         '''
         if not text:
@@ -203,8 +203,20 @@ class INEHvdBackend(BaseBackend):
             return 'annual'
         if 'trimestral' in t:
             return 'quarterly'
+        if 'semestral' in t:
+            return 'semiannual'
         if 'semanal' in t:
             return 'weekly'
+        if 'quinzenal' in t:
+            return 'biweekly'
         if 'diário' in t or 'diario' in t:
             return 'daily'
+        if 'quinquenal' in t:
+            return 'quinquennial'
+        if 'irregular' in t or 'não periódica' in t or 'nao periodica' in t:
+            return 'irregular'
+        if 'pontual' in t:
+            return 'punctual'
+        if 'contínuo' in t or 'continuo' in t:
+            return 'continuous'
         return 'unknown'
