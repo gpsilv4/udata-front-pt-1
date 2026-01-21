@@ -1,10 +1,9 @@
-import logging
-import requests
-
-from udata.i18n import gettext as _
-from udata.harvest.backends.base import BaseBackend, HarvestFilter
-from udata.models import Resource, Dataset, License, SpatialCoverage
+from udata.harvest.backends.base import BaseBackend
+from udata.models import Resource, License, SpatialCoverage
+from udata.core.contact_point.models import ContactPoint
 from udata.harvest.models import HarvestItem
+import requests
+import logging
 
 from .tools.harvester_utils import normalize_url_slashes
 
@@ -14,25 +13,8 @@ class OGCBackend(BaseBackend):
     Harvester backend for OGC API - Collections (JSON format).
     Processes collections from OGC API endpoints and creates datasets with resources.
     """
+    name = "ogc"
     display_name = 'Harvester OGC'
-
-    # Filtros configuráveis expostos no backoffice para este harvester.
-    # Cada filtro é um `HarvestFilter(label, field, type, help_text)` que permite
-    # incluir ou excluir datasets com base em campos do metadata.
-    # Campos suportados (comparação sem distinção entre maiúsculas/minúsculas):
-    #  - 'organization': verifica `provider.name` ou identificador do provedor (substring).
-    #  - 'tags': verifica a lista de `keywords` do dataset.
-    #  - 'id': verifica o `remote_id` do dataset.
-    # Tipos de filtro: 'include' (padrão) ou 'exclude' (quando configurado no backoffice).
-    # Exemplos de configuração (no campo `filters` da fonte):
-    #  - {"type": "exclude", "field": "organization", "value": "turismo-de-portugal-ip"}
-    #  - {"type": "include", "field": "tags", "value": "climate"}
-    filters = (
-        HarvestFilter(_('Organization'), 'organization', str,
-                      _('A OGC Organization name')),
-        HarvestFilter(_('Tag'), 'tags', str, _('A OGC tag name')),
-        HarvestFilter(_('Remote ID'), 'id', str, _('A dataset remote id')),
-    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,17 +68,6 @@ class OGCBackend(BaseBackend):
                 "temporal_coverage": each.get("temporalCoverage"),
                 "provider": each.get("provider") or data.get("provider"),
             }
-
-            # Apply configurable filters (if any) before processing
-            filters = self.config.get('filters', []) or []
-            try:
-                if not self._passes_filters(item, filters):
-                    self.logger.debug(f"Skipping dataset {item.get('remote_id')} due to filters")
-                    continue
-            except Exception as e:
-                self.logger.error(f"Error while applying filters for {item.get('remote_id')}: {e}")
-                # On filter errors, skip the dataset to avoid processing unintended items
-                continue
 
             self.process_dataset(item["remote_id"], items=item)
 
@@ -179,126 +150,34 @@ class OGCBackend(BaseBackend):
             dataset.extras['publisher_name'] = provider.get('name')
             dataset.extras['publisher_email'] = provider.get('contactPoint', {}).get('email')
 
+            # Create contact point
+            name = provider.get('name')
+            email = provider.get('contactPoint', {}).get('email') or provider.get('email')
+            if email:
+                email = email.replace('mailto:', '').strip()
+
+            if name or email:
+                org_or_owner = {}
+                if dataset.organization:
+                    org_or_owner = {"organization": dataset.organization}
+                elif dataset.owner:
+                    org_or_owner = {"owner": dataset.owner}
+
+                if org_or_owner:
+                    contact, _ = ContactPoint.objects.get_or_create(
+                        name=name,
+                        email=email,
+                        role='publisher',
+                        **org_or_owner
+                    )
+
+                    if not dataset.contact_points:
+                        dataset.contact_points = []
+                    
+                    if contact not in dataset.contact_points:
+                        dataset.contact_points.append(contact)
+
         return dataset
-
-    def _normalize_val(self, value):
-        """Normalize a value for comparisons (lowercased string)."""
-        if value is None:
-            return ""
-        if isinstance(value, (list, tuple)):
-            # flatten to a comma-separated string
-            return ",".join([str(v).strip().lower() for v in value if v is not None])
-        return str(value).strip().lower()
-
-    def _normalize_filter(self, f):
-        """Turn a filter spec (dict/tuple/str) into a normalized dict.
-
-        Expected normalized keys: {'type': 'include'|'exclude', 'field': <field>, 'value': <value>}
-        Acceptable input forms:
-        - dict with 'type'/'field'/'value'
-        - tuple/list (type, field, value) or (field, value)
-        - string (interpreted as a tag include)
-        """
-        if isinstance(f, dict):
-            ftype = f.get('type', 'include') or 'include'
-            field = f.get('field') or f.get('key') or f.get('name')
-            value = f.get('value')
-        elif isinstance(f, (list, tuple)):
-            if len(f) == 3:
-                ftype, field, value = f
-            elif len(f) == 2:
-                ftype = 'include'
-                field, value = f
-            else:
-                raise ValueError('Invalid filter tuple/sequence')
-        else:
-            # plain string -> tag include
-            ftype = 'include'
-            field = 'tags'
-            value = f
-
-        return {
-            'type': str(ftype).strip().lower(),
-            'field': str(field).strip().lower() if field is not None else '',
-            'value': str(value).strip() if value is not None else ''
-        }
-
-    def _matches_filter(self, f, item):
-        """Return True if `item` matches the single normalized filter `f`.
-
-        Supported fields: 'organization' (provider name or id), 'tags' (keywords), 'id' (remote_id), 'title'
-        Matching is case-insensitive and uses substring matching for convenience.
-        """
-        field = f.get('field')
-        value = self._normalize_val(f.get('value'))
-        if not value:
-            return False
-
-        # Organization: check provider name / id
-        if field in ('organization', 'org', 'organization_id'):
-            provider = item.get('provider') or {}
-            if isinstance(provider, dict):
-                provider_name = self._normalize_val(provider.get('name') or provider.get('id') or provider.get('identifier'))
-                return value in provider_name
-            # provider may be a string
-            prov_str = self._normalize_val(provider)
-            return value in prov_str
-
-        # Tags: check keywords
-        if field in ('tag', 'tags', 'label'):
-            keywords = item.get('keywords') or []
-            if isinstance(keywords, str):
-                keywords = [k.strip() for k in keywords.split(',') if k.strip()]
-            for kw in keywords:
-                if value in self._normalize_val(kw):
-                    return True
-            return False
-
-        # ID: check remote_id
-        if field in ('id', 'remote_id', 'dataset_id'):
-            remote = self._normalize_val(item.get('remote_id'))
-            return value in remote
-
-        # Title: check title substring
-        if field in ('title',):
-            title = self._normalize_val(item.get('title'))
-            return value in title
-
-        # Fallback: try to look in remote_id or title
-        remote = self._normalize_val(item.get('remote_id'))
-        title = self._normalize_val(item.get('title'))
-        return (value in remote) or (value in title)
-
-    def _passes_filters(self, item, filters):
-        """Evaluate the list of filters for a given `item`.
-
-        - Any matching 'exclude' filter will cause the item to be excluded (returns False).
-        - If one or more 'include' filters are present, the item must match at least one include to pass.
-        - If no include filters are present, and no exclude matches, the item passes.
-        """
-        if not filters:
-            return True
-
-        parsed = [self._normalize_filter(f) for f in filters]
-
-        # Exclude if any exclude filter matches
-        for f in parsed:
-            if f.get('type') == 'exclude' and self._matches_filter(f, item):
-                self.logger.debug(f"Filter exclude matched for {item.get('remote_id')}: {f}")
-                return False
-
-        # Check include filters (if any)
-        include_filters = [f for f in parsed if f.get('type') == 'include']
-        if include_filters:
-            for f in include_filters:
-                if self._matches_filter(f, item):
-                    return True
-            # No include filters matched
-            self.logger.debug(f"No include filters matched for {item.get('remote_id')}")
-            return False
-
-        # No include filters and no excludes matched => pass
-        return True
 
     def _extract_format_from_mime(self, mime_type: str) -> str:
         """
