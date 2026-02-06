@@ -16,14 +16,14 @@ from udata_front import theme
 
 from udata.core.site.models import current_site
 
-blueprint = I18nBlueprint('site', __name__)
+blueprint = I18nBlueprint("site", __name__)
 
 log = logging.getLogger(__name__)
 
 
-@blueprint.route('/robots.txt')
+@blueprint.route("/robots.txt")
 def static_from_root():
-    return send_from_directory(current_app.static_folder, 'robots.txt')
+    return send_from_directory(current_app.static_folder, "robots.txt")
 
 
 @blueprint.app_context_processor
@@ -31,16 +31,20 @@ def inject_site():
     return dict(current_site=current_site)
 
 
-@blueprint.route('/activity.atom')
+@blueprint.route("/activity.atom")
 def activity_feed():
     # TODO: doesn't seem tested. Is it used somewhere?
-    activity_keys = request.args.getlist('key')
+    activity_keys = request.args.getlist("key")
 
     feed = Atom1Feed(
-        current_app.config.get('SITE_TITLE'), feed_url=request.url,
-        link=request.url_root, description=None)
-    activities = (Activity.objects.order_by('-created_at')
-                                  .limit(current_site.feed_size))
+        current_app.config.get("SITE_TITLE"),
+        link=request.url_root,
+        description=None,
+        feed_url=request.url,
+        author_name=current_site.author or current_app.config.get("SITE_AUTHOR"),
+        author_link=request.url_root,
+    )
+    activities = Activity.objects.order_by("-created_at").limit(current_site.feed_size)
 
     for activity in activities.select_related():
         # filter by activity.key
@@ -50,55 +54,63 @@ def activity_feed():
         try:
             owner = activity.actor or activity.organization
         except DoesNotExist:
-            owner = 'deleted'
+            owner = "deleted"
             owner_url = None
         else:
             owner_url = owner.url_for(_external=True)
         try:
             related = activity.related_to
         except DoesNotExist:
-            related = 'deleted'
+            related = "deleted"
             related_url = None
         else:
             related_url = related.url_for(_external=True)
+        if not owner or owner == "deleted":
+            owner_name = current_site.author or current_app.config.get("SITE_AUTHOR")
+            owner_uri = request.url_root
+        else:
+            owner_name = owner
+            owner_uri = owner_url
         feed.add_item(
-            id='%s#activity=%s' % (
-                url_for('site.dashboard', _external=True), activity.id),
-            title='%s by %s on %s' % (
-                activity.key, owner, related),
+            unique_id="%s#activity=%s"
+            % (url_for("site.dashboard", _external=True), activity.id),
+            title="%s by %s on %s" % (activity.key, owner, related),
             description=None,
             link=related_url,
-            author_name=owner,
-            author_link=owner_url,
-            updateddate=activity.created_at
+            author_name=owner_name,
+            author_link=owner_uri,
+            updateddate=activity.created_at,
         )
-    response = make_response(feed.writeString('utf-8'))
-    response.headers['Content-Type'] = 'application/atom+xml'
+    response = make_response(feed.writeString("utf-8"))
+    response.headers["Content-Type"] = "application/atom+xml; charset=utf-8"
     return response
 
 
-@blueprint.route('/')
+@blueprint.route("/")
 def home():
     context = {
-        'spd_datasets': Dataset.objects.filter(badges__kind='spd'),
-        'recent_datasets': Dataset.objects.visible(),
-        'recent_reuses': Reuse.objects(featured=True).visible(),
-        'last_post': Post.objects.published().first(),
-        'data_metrics': [
-            (_('Datasets and Dataservices'),
-             current_site.metrics.get('datasets', 0) + current_site.metrics.get('dataservices', 0)),
-            (_('Files'), current_site.metrics.get('resources', 0)),
-            (_('Organizations'), current_site.metrics.get('organizations', 0)),
+        "spd_datasets": Dataset.objects.filter(badges__kind="spd"),
+        "recent_datasets": Dataset.objects.visible(),
+        "recent_reuses": Reuse.objects(featured=True).visible(),
+        "last_post": Post.objects.published().first(),
+        "data_metrics": [
+            (
+                _("Datasets and Dataservices"),
+                current_site.metrics.get("datasets", 0)
+                + current_site.metrics.get("dataservices", 0),
+            ),
+            (_("Files"), current_site.metrics.get("resources", 0)),
+            (_("Organizations"), current_site.metrics.get("organizations", 0)),
         ],
-        'community_metrics': [
-            (_('Reuses'), current_site.metrics.get('reuses', 0)),
-            (_('Users'), current_site.metrics.get('users', 0)),
-            (_('Discussions'), current_site.metrics.get('discussions', 0)),
-        ]
+        "community_metrics": [
+            (_("Reuses"), current_site.metrics.get("reuses", 0)),
+            (_("Users"), current_site.metrics.get("users", 0)),
+            (_("Discussions"), current_site.metrics.get("discussions", 0)),
+        ],
     }
-    processor = theme.current.get_processor('home')
+    processor = theme.current.get_processor("home")
     context = processor(context)
-    return theme.render('home.html', **context)
+    return theme.render("home.html", **context)
 
 
 class SiteView(object):
@@ -109,21 +121,21 @@ class SiteView(object):
     object = site
 
 
-@blueprint.route('/dashboard/', endpoint='dashboard')
+@blueprint.route("/dashboard/", endpoint="dashboard")
 def site_dashboard():
     context = {
-        'update_date': Dataset.objects.filter(badges__kind='spd'),
-        'recent_datasets': Dataset.objects.visible(),
-        'recent_reuses': Reuse.objects(featured=True).visible(),
-        'last_post': Post.objects.published().first()
+        "update_date": Dataset.objects.filter(badges__kind="spd"),
+        "recent_datasets": Dataset.objects.visible(),
+        "recent_reuses": Reuse.objects(featured=True).visible(),
+        "last_post": Post.objects.published().first(),
     }
-    return theme.render('site/dashboard.html', **context)
+    return theme.render("site/dashboard.html", **context)
 
 
 @cache.cached(50)
 def get_terms_content():
-    filename = current_app.config['SITE_TERMS_LOCATION']
-    if filename.startswith('http'):
+    filename = current_app.config["SITE_TERMS_LOCATION"]
+    if filename.startswith("http"):
         # We let the error appear because:
         # - we dont want to cache false responses
         # - this is only visible on terms
@@ -135,14 +147,14 @@ def get_terms_content():
             return terms.read()
 
 
-@blueprint.route('/terms/')
+@blueprint.route("/terms/")
 def terms():
     content = get_terms_content()
-    return theme.render('terms.html', terms=content)
+    return theme.render("terms.html", terms=content)
 
 
 @sitemap.register_generator
 def site_sitemap_urls():
-    yield 'site.home_redirect', {}, None, 'daily', 1
-    yield 'site.dashboard_redirect', {}, None, 'weekly', 0.6
-    yield 'site.terms_redirect', {}, None, 'monthly', 0.2
+    yield "site.home_redirect", {}, None, "daily", 1
+    yield "site.dashboard_redirect", {}, None, "weekly", 0.6
+    yield "site.terms_redirect", {}, None, "monthly", 0.2
