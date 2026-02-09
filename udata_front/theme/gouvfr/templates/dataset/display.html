@@ -172,7 +172,7 @@
             </div>
             <h2 class="subtitle fr-mt-3v fr-mb-1v">{{ _('Latest update') }}</h2>
             <p class="fr-text--sm fr-mt-0 fr-mb-3v">
-                {{ dataset.last_update|dateformat(format='long') }}
+                {{ (dataset.last_modified_internal or dataset.last_update)|dateformat(format='long') }}
             </p>
             {% if dataset.license %}
             <h2 class="subtitle fr-mt-3v fr-mb-1v">{{ _('License') }}</h2>
@@ -482,7 +482,7 @@
             </div>
             <div class="fr-grid-row fr-grid-row--gutters">
                 {% call() information_col(_('Latest update')) %}
-                {{ dataset.last_update|dateformat(format='long') }}
+                {{ (dataset.last_modified_internal or dataset.last_update)|dateformat(format='long') }}
                 {% endcall %}
             </div>
             {% endcall %}

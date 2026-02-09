@@ -5,6 +5,7 @@ Este documento mapeia os campos obtidos do harvester `OdsBackendPT` (OpenDataSof
 ## Fonte de Dados
 
 **API OpenDataSoft**: Plataforma OpenDataSoft
+
 - Endpoint: `{source_url}/api/datasets/1.0/search/`
 - Protocolo: REST API JSON
 - Paginação: 50 registos por página
@@ -17,50 +18,52 @@ Este documento mapeia os campos obtidos do harvester `OdsBackendPT` (OpenDataSof
 
 ## Resumo do Mapeamento
 
-| Campo Fonte (ODS API) | Propriedade JSON | Campo Destino (uData `Dataset`) | Notas / Lógica |
-| :--- | :--- | :--- | :--- |
-| **Dataset** | | | |
-| `datasetid` | `dataset['datasetid']` | `remote_id` (HarvestItem) | ID único do dataset no ODS. |
-| `metas.title` | `ods_metadata['title']` | `title` | Título do dataset. |
-| `metas.description` | `ods_metadata['description']` | `description` | Descrição (HTML parseado). |
-| `metas.publisher` | `ods_metadata['publisher']` | `organization.acronym` | Cria/associa organização. |
-| `metas.keyword` | `ods_metadata['keyword']` | `tags` | Keywords (lista ou string). |
-| `metas.theme` | `ods_metadata['theme']` | `tags` | Temas (divididos por vírgula). |
-| - | - | `tags` | Adiciona hostname da fonte. |
-| `metas.license` | `ods_metadata['license']` | `license` | Mapeamento de licenças ODS. |
-| - | - | `frequency` | Fixo: `'unknown'`. |
-| - | - | `private` | Fixo: `False`. |
-| `has_records` | `ods_dataset['has_records']` | - | Validação (skip se False). |
-| `interop_metas.inspire` | `ods_interopmetas['inspire']` | - | Validação (skip se presente e feature desativada). |
-| `metas.modified` | `ods_metadata['modified']` | `resources[].modified` | Data de modificação dos recursos. |
-| `metas.records_count` | `ods_metadata['records_count']` | - | Determina se exporta Shapefile. |
-| **Extras** | | | |
-| - | - | `extras['ods:url']` | URL de exploração do dataset. |
-| - | - | `extras['harvest:name']` | Nome da fonte de harvest. |
-| `metas.references` | `ods_metadata['references']` | `extras['ods:references']` | Referências do dataset. |
-| `has_records` | `ods_dataset['has_records']` | `extras['ods:has_records']` | Indica se tem registos. |
-| `features` | `'geo' in ods_dataset['features']` | `extras['ods:geo']` | Indica se tem dados geográficos. |
-| **Resource (Exports)** | | | |
-| - | Download URL | `url` | URL de download do export. |
-| - | - | `title` | "Export to {format}". |
-| `fields` | `data['fields']` | `description` | Schema dos campos. |
-| - | - | `filetype` | Fixo: `'remote'`. |
-| - | - | `format` | Formato do export (csv, json, etc.). |
-| - | - | `mime` | MIME type do formato. |
-| `metas.modified` | `ods_metadata['modified']` | `modified` | Data de modificação. |
-| - | - | `extras['ods:type']` | Fixo: `'api'`. |
-| **Resource (Extra Files)** | | | |
-| `alternative_exports[].id` | `export['id']` | - | ID do ficheiro extra. |
-| `alternative_exports[].title` | `export['title']` | `title` | Título do ficheiro. |
-| `alternative_exports[].description` | `export['description']` | `description` | Descrição do ficheiro. |
-| `alternative_exports[].mimetype` | `export['mimetype']` | `format` / `mime` | Tipo de ficheiro. |
-| `alternative_exports[].url` | `export['url']` | - | URL original (não usado). |
-| - | - | `extras['ods:type']` | `'alternative_export'` ou `'attachment'`. |
+| Campo Fonte (ODS API)               | Propriedade JSON                   | Campo Destino (uData `Dataset`)                          | Notas / Lógica                                     |
+| :---------------------------------- | :--------------------------------- | :------------------------------------------------------- | :------------------------------------------------- |
+| **Dataset**                         |                                    |                                                          |                                                    |
+| `datasetid`                         | `dataset['datasetid']`             | `remote_id` (HarvestItem)                                | ID único do dataset no ODS.                        |
+| `metas.title`                       | `ods_metadata['title']`            | `title`                                                  | Título do dataset.                                 |
+| `metas.description`                 | `ods_metadata['description']`      | `description`                                            | Descrição (HTML parseado).                         |
+| `metas.publisher`                   | `ods_metadata['publisher']`        | `organization.acronym`                                   | Cria/associa organização.                          |
+| `metas.keyword`                     | `ods_metadata['keyword']`          | `tags`                                                   | Keywords (lista ou string).                        |
+| `metas.theme`                       | `ods_metadata['theme']`            | `tags`                                                   | Temas (divididos por vírgula).                     |
+| -                                   | -                                  | `tags`                                                   | Adiciona hostname da fonte.                        |
+| `metas.license`                     | `ods_metadata['license']`          | `license`                                                | Mapeamento de licenças ODS.                        |
+| -                                   | -                                  | `frequency`                                              | Fixo: `'unknown'`.                                 |
+| -                                   | -                                  | `private`                                                | Fixo: `False`.                                     |
+| `has_records`                       | `ods_dataset['has_records']`       | -                                                        | Validação (skip se False).                         |
+| `interop_metas.inspire`             | `ods_interopmetas['inspire']`      | -                                                        | Validação (skip se presente e feature desativada). |
+| `metas.modified`                    | `ods_metadata['modified']`         | `resources[].modified`, `dataset.last_modified_internal` | Data de modificação dos recursos e dataset.        |
+| `metas.records_count`               | `ods_metadata['records_count']`    | -                                                        | Determina se exporta Shapefile.                    |
+| **Extras**                          |                                    |                                                          |                                                    |
+| -                                   | -                                  | `extras['ods:url']`                                      | URL de exploração do dataset.                      |
+| -                                   | -                                  | `extras['harvest:name']`                                 | Nome da fonte de harvest.                          |
+| `metas.references`                  | `ods_metadata['references']`       | `extras['ods:references']`                               | Referências do dataset.                            |
+| `has_records`                       | `ods_dataset['has_records']`       | `extras['ods:has_records']`                              | Indica se tem registos.                            |
+| `features`                          | `'geo' in ods_dataset['features']` | `extras['ods:geo']`                                      | Indica se tem dados geográficos.                   |
+| **Resource (Exports)**              |                                    |                                                          |                                                    |
+| -                                   | Download URL                       | `url`                                                    | URL de download do export.                         |
+| -                                   | -                                  | `title`                                                  | "Export to {format}".                              |
+| `fields`                            | `data['fields']`                   | `description`                                            | Schema dos campos.                                 |
+| -                                   | -                                  | `filetype`                                               | Fixo: `'remote'`.                                  |
+| -                                   | -                                  | `format`                                                 | Formato do export (csv, json, etc.).               |
+| -                                   | -                                  | `mime`                                                   | MIME type do formato.                              |
+| `metas.modified`                    | `ods_metadata['modified']`         | `modified`                                               | Data de modificação.                               |
+| -                                   | -                                  | `extras['ods:type']`                                     | Fixo: `'api'`.                                     |
+| **Resource (Extra Files)**          |                                    |                                                          |                                                    |
+| `alternative_exports[].id`          | `export['id']`                     | -                                                        | ID do ficheiro extra.                              |
+| `alternative_exports[].title`       | `export['title']`                  | `title`                                                  | Título do ficheiro.                                |
+| `alternative_exports[].description` | `export['description']`            | `description`                                            | Descrição do ficheiro.                             |
+| `alternative_exports[].mimetype`    | `export['mimetype']`               | `format` / `mime`                                        | Tipo de ficheiro.                                  |
+| `alternative_exports[].url`         | `export['url']`                    | -                                                        | URL original (não usado).                          |
+| -                                   | -                                  | `extras['ods:type']`                                     | `'alternative_export'` ou `'attachment'`.          |
 
 ## Detalhes Específicos
 
 ### 1. Paginação
+
 O harvester processa datasets em lotes de 50:
+
 ```python
 params = {
     'start': count,
@@ -70,7 +73,9 @@ params = {
 ```
 
 ### 2. Filtros
+
 Suporta filtros configuráveis mapeados para facets ODS:
+
 ```python
 FILTERS = {
     'tags': 'keyword',
@@ -79,26 +84,32 @@ FILTERS = {
 ```
 
 **Tipos de filtro:**
+
 - `refine.{facet}` - Inclusivo (apenas datasets com este valor)
 - `exclude.{facet}` - Exclusivo (exclui datasets com este valor)
 
 ### 3. Validações
 
 #### 3.1 Skip se Sem Registos
+
 ```python
 if not ods_dataset.get('has_records'):
     raise HarvestSkipException('Dataset has no record')
 ```
 
 #### 3.2 Skip INSPIRE (Opcional)
+
 Se a feature `inspire` não estiver ativada:
+
 ```python
 if 'inspire' in ods_interopmetas and not self.has_feature('inspire'):
     raise HarvestSkipException('Dataset has INSPIRE metadata')
 ```
 
 ### 4. Organização
+
 Cria automaticamente organizações se não existirem:
+
 ```python
 organization_acronym = ods_metadata['publisher']
 orgObj = Organization.objects(acronym=organization_acronym).first()
@@ -116,7 +127,9 @@ else:
 ### 5. Tags
 
 #### 5.1 Keywords
+
 Suporta lista ou string única:
+
 ```python
 if isinstance(ods_metadata['keyword'], list):
     tags |= set(ods_metadata['keyword'])
@@ -125,7 +138,9 @@ else:
 ```
 
 #### 5.2 Themes
+
 Temas são divididos por vírgula e convertidos para lowercase:
+
 ```python
 if isinstance(ods_metadata['theme'], list):
     for theme in ods_metadata['theme']:
@@ -136,13 +151,17 @@ else:
 ```
 
 #### 5.3 Hostname
+
 Adiciona o hostname da fonte:
+
 ```python
 dataset.tags.append(urlparse(self.source.url).hostname)
 ```
 
 ### 6. Licenças
+
 Mapeamento de licenças ODS para uData:
+
 ```python
 LICENSES = {
     'Open Database License (ODbL)': 'odc-odbl',
@@ -162,13 +181,17 @@ dataset.license = License.guess(
 ### 7. Recursos (Resources)
 
 #### 7.1 Exports Standard
+
 Sempre cria recursos para CSV e JSON:
+
 ```python
 self.process_resources(dataset, ods_dataset, ('csv', 'json'))
 ```
 
 #### 7.2 Exports Geográficos
+
 Se o dataset tem dados geográficos:
+
 ```python
 if 'geo' in ods_dataset['features']:
     exports = ['geojson']
@@ -180,6 +203,7 @@ if 'geo' in ods_dataset['features']:
 **Limite Shapefile:** 50.000 registos (acima disto, o export seria parcial)
 
 #### 7.3 Formatos Suportados
+
 ```python
 FORMATS = {
     'csv': ('CSV', 'csv', 'text/csv'),
@@ -190,12 +214,15 @@ FORMATS = {
 ```
 
 #### 7.4 URL de Download
+
 ```python
 url = '{explore_url}download?format={format}&timezone=Europe/Berlin&use_labels_for_header=true'
 ```
 
 #### 7.5 Descrição do Recurso
+
 Construída a partir dos campos do dataset:
+
 ```python
 def description_from_fields(fields):
     out = ''
@@ -208,6 +235,7 @@ def description_from_fields(fields):
 ```
 
 **Exemplo:**
+
 ```
 - *Nome*: name[text] Nome completo
 - *Idade*: age[int] Idade em anos
@@ -217,23 +245,29 @@ def description_from_fields(fields):
 ### 8. Ficheiros Extra
 
 #### 8.1 Alternative Exports
+
 Ficheiros de export alternativos fornecidos pelo publisher:
+
 ```python
 self.process_extra_files(dataset, ods_dataset, 'alternative_export')
 ```
 
 #### 8.2 Attachments
+
 Ficheiros anexos ao dataset:
+
 ```python
 self.process_extra_files(dataset, ods_dataset, 'attachment')
 ```
 
 #### 8.3 URL de Ficheiros Extra
+
 ```python
 url = '{source_url}/api/datasets/1.0/{dataset_id}/{plural_type}/{file_id}'
 ```
 
 ### 9. Detecção de Formato e MIME Type
+
 ```python
 def guess_format(mimetype, url=None):
     ext = mimetypes.guess_extension(mimetype)
@@ -253,6 +287,7 @@ def guess_mimetype(mimetype, url=None):
 ## Exemplo de Mapeamento
 
 ### Resposta ODS API (simplificado)
+
 ```json
 {
   "nhits": 150,
@@ -273,8 +308,13 @@ def guess_mimetype(mimetype, url=None):
         "references": "https://covid19.min-saude.pt"
       },
       "fields": [
-        {"name": "data", "label": "Data", "type": "date"},
-        {"name": "casos", "label": "Casos", "type": "int", "description": "Número de casos"}
+        { "name": "data", "label": "Data", "type": "date" },
+        {
+          "name": "casos",
+          "label": "Casos",
+          "type": "int",
+          "description": "Número de casos"
+        }
       ]
     }
   ]
@@ -282,6 +322,7 @@ def guess_mimetype(mimetype, url=None):
 ```
 
 ### Dataset uData resultante
+
 ```python
 dataset.title = "Dados COVID-19 Portugal"
 dataset.description = "Dados diários sobre COVID-19"
