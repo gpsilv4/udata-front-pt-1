@@ -12,9 +12,9 @@ RESOURCE_TYPES = ('file', 'file.upload', 'api', 'documentation',
 
 resource = {
     'id': str,
-    'position': int,
+    Optional('position'): int,
     'name': All(DefaultTo(''), str),
-    'description': All(str, normalize_string),
+    Optional('description'): All(str, normalize_string),
     'format': All(str, Lower),
     'mimetype': Any(All(str, Lower), None),
     'size': Any(Coerce(int), None),
