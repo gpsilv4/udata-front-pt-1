@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "types": ["cypress"]
+    "types": []
   },
   "include": ["**/*.js", "**/*.ts"]
 }
