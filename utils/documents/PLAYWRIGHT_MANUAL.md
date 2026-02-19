@@ -72,7 +72,16 @@ Pode customizar a execução passando variáveis de ambiente antes do comando:
 **Executar apenas um ficheiro específico em TST:**
 
 ```bash
+TARGET_ENV=PRD npx playwright test --config playwright.config.ts
+npx playwright show-report
+```
+
+```bash
 TARGET_ENV=TST npx playwright test tests/smoke/smoke-post-deploy.spec.ts
+```
+
+```bash
+TARGET_ENV=TST npx playwright test tests/smoke/smoke-post-deploy.spec.ts --ui
 ```
 
 **Executar um teste específico pelo nome (ex: apenas Search):**

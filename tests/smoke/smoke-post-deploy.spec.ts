@@ -8,18 +8,27 @@
  *   2. Pesquisa — resultados da base de dados aparecem
  *   3. Download de recurso de um dataset
  *   4. Integridade de assets (imagens e CSS)
+ *   5. Redefinição de palavra-passe
+ *
+ * ─── Propagação de Erro (Bubble-Up) ─────────────────────────────────────────
+ *
+ *   Usa APENAS expect() (hard assert) dentro de test.step().
+ *   Quando expect() falha:
+ *
+ *     expect() lança excepção
+ *       └→ test.step() captura internamente → marca step ❌ → re-lança
+ *         └→ Teste recebe excepção → teste ❌
+ *
+ *   Resultado: falha em 3 níveis (subitem ❌ / step ❌ / teste ❌).
+ *   Zero try/catch. Zero wrappers. Zero expect.soft().
  *
  * ─── Execução ────────────────────────────────────────────────────────────────
- *   # PRD (default):
- *   npx playwright test --config playwright.config.ts
- *
- *   # Outros ambientes:
  *   TARGET_ENV=PRD npx playwright test --config playwright.config.ts
  *   TARGET_ENV=PPR npx playwright test --config playwright.config.ts
  *   TARGET_ENV=TST npx playwright test --config playwright.config.ts
  *   TARGET_ENV=DEV npx playwright test --config playwright.config.ts
  *
- * ─── Ambientes disponíveis ────────────────────────────────────────────────
+ * ─── Ambientes ───────────────────────────────────────────────────────────────
  *   PRD → https://dados.gov.pt
  *   PPR → https://preprod.dados.gov.pt
  *   TST → http://10.55.37.38
@@ -33,15 +42,12 @@ import { test, expect, Page, Response } from "@playwright/test";
 
 const TARGET_ENV = (process.env.TARGET_ENV || "PRD").toUpperCase();
 
-/** Seletor para o campo de pesquisa (cobre diferentes implementações) */
 const SEARCH_INPUT =
   'input[type="search"], input[name="q"], input[data-cy="search-input"]';
 
-/** Seletores para resultados de autocomplete */
 const SEARCH_RESULTS =
   '[role="listbox"], [role="menu"], .search-results, .autocomplete, [id*="listbox"]';
 
-/** Seletores para links de download */
 const DOWNLOAD_LINK =
   "a.matomo_download, a[download], a.fr-icon-download-line, a.fr-icon-external-link-line";
 
@@ -52,49 +58,57 @@ test.describe(`[${TARGET_ENV}] 1. Home Page — Disponibilidade`, () => {
   test("Home Page responde com HTTP 200", async ({ page, baseURL }) => {
     const response = await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    expect(
-      response?.status(),
-      `❌ Home Page não respondeu com 200 em ${TARGET_ENV} (${baseURL}).\n` +
-        `   CAUSA: O servidor pode estar em baixo ou inacessível.\n` +
-        `   RESOLUÇÃO: Verificar se o serviço está activo: curl -I ${baseURL}`,
-    ).toBe(200);
+    await test.step("status HTTP deve ser 200", async () => {
+      expect(
+        response?.status(),
+        `❌ Home Page não respondeu com 200 em ${TARGET_ENV} (${baseURL}).\n` +
+          `   CAUSA: O servidor pode estar em baixo ou inacessível.\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}`,
+      ).toBe(200);
+    });
   });
 
   test("Título contém 'dados.gov' ou 'uData'", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     const title = await page.title();
 
-    expect(
-      title,
-      `❌ Título da página: "${title}".\n` +
-        `   CAUSA: O título não contém "dados.gov" nem "uData".\n` +
-        `   RESOLUÇÃO: Verificar SITE_TITLE em udata.cfg ou variáveis de ambiente.`,
-    ).toMatch(/dados\.gov|uData/i);
+    await test.step("título da página contém 'dados.gov' ou 'uData'", async () => {
+      expect(
+        title,
+        `❌ Título da página: "${title}".\n` +
+          `   CAUSA: O título não contém "dados.gov" nem "uData".\n` +
+          `   RESOLUÇÃO: Verificar SITE_TITLE em udata.cfg ou variáveis de ambiente.`,
+      ).toMatch(/dados\.gov|uData/i);
+    });
   });
 
   test("Elemento <h1> é visível na Home Page", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const h1 = page.locator("h1").first();
-    await expect(
-      h1,
-      `❌ Nenhum <h1> visível encontrado na Home Page.\n` +
-        `   CAUSA: O template pode não estar a renderizar correctamente\n` +
-        `   ou o Vue/JS não inicializou.\n` +
-        `   RESOLUÇÃO: Verificar se os assets JS carregam sem erros na consola.`,
-    ).toBeVisible();
+    await test.step("<h1> deve estar visível", async () => {
+      const h1 = page.locator("h1").first();
+      await expect(
+        h1,
+        `❌ Nenhum <h1> visível encontrado na Home Page.\n` +
+          `   CAUSA: O template pode não estar a renderizar correctamente\n` +
+          `   ou o Vue/JS não inicializou.\n` +
+          `   RESOLUÇÃO: Verificar se os assets JS carregam sem erros na consola.`,
+      ).toBeVisible();
+    });
   });
 
   test("Página contém atributo lang='pt' no HTML", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     const lang = await page.getAttribute("html", "lang");
 
-    expect(
-      lang ?? "",
-      `❌ Atributo lang="${lang}" não começa com "pt".\n` +
-        `   CAUSA: DEFAULT_LANGUAGE pode estar configurado para outro idioma.\n` +
-        `   RESOLUÇÃO: Verificar DEFAULT_LANGUAGE em udata.cfg (deve ser "pt").`,
-    ).toMatch(/^pt/);
+    await test.step("atributo lang deve começar com 'pt'", async () => {
+      expect(
+        lang ?? "",
+        `❌ Atributo lang="${lang}" não começa com "pt".\n` +
+          `   CAUSA: DEFAULT_LANGUAGE pode estar configurado para outro idioma.\n` +
+          `   RESOLUÇÃO: Verificar DEFAULT_LANGUAGE em udata.cfg (deve ser "pt").`,
+      ).toMatch(/^pt/);
+    });
   });
 });
 
@@ -105,23 +119,24 @@ test.describe(`[${TARGET_ENV}] 2. Pesquisa — Resultados da BD`, () => {
   test("Barra de pesquisa está visível e funcional", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const searchInput = page.locator(SEARCH_INPUT).first();
-    await expect(
-      searchInput,
-      `❌ Campo de pesquisa não encontrado na Home Page.\n` +
-        `   CAUSA: O componente Vue pode não ter renderizado ou o seletor mudou.\n` +
-        `   RESOLUÇÃO:\n` +
-        `   1. Verificar se os ficheiros JS carregam sem erros.\n` +
-        `   2. Inspecionar o DOM para encontrar o input de pesquisa actual.\n` +
-        `   3. Atualizar o seletor SEARCH_INPUT no teste se necessário.`,
-    ).toBeVisible();
+    await test.step("campo de pesquisa deve estar visível", async () => {
+      const searchInput = page.locator(SEARCH_INPUT).first();
+      await expect(
+        searchInput,
+        `❌ Campo de pesquisa não encontrado na Home Page.\n` +
+          `   CAUSA: O componente Vue pode não ter renderizado ou o seletor mudou.\n` +
+          `   RESOLUÇÃO:\n` +
+          `   1. Verificar se os ficheiros JS carregam sem erros.\n` +
+          `   2. Inspecionar o DOM para encontrar o input de pesquisa actual.\n` +
+          `   3. Atualizar o seletor SEARCH_INPUT no teste se necessário.`,
+      ).toBeVisible();
+    });
   });
 
   test("Pesquisar 'dados' retorna resultados da API", async ({
     page,
     baseURL,
   }) => {
-    // Interceptar chamadas à API de pesquisa para confirmar que a BD responde
     const apiResponsePromise = page.waitForResponse(
       (res: Response) =>
         res.url().includes("/api/1/datasets") ||
@@ -131,16 +146,13 @@ test.describe(`[${TARGET_ENV}] 2. Pesquisa — Resultados da BD`, () => {
     );
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
-
     const searchInput = page.locator(SEARCH_INPUT).first();
     await searchInput.fill("dados");
 
-    // Aguardar resposta da API
-    let apiStatus: number | null = null;
-    try {
-      const apiResponse = await apiResponsePromise;
-      apiStatus = apiResponse.status();
+    const apiResponse = await apiResponsePromise;
+    const apiStatus = apiResponse.status();
 
+    await test.step("API de pesquisa responde com HTTP < 400", async () => {
       expect(
         apiStatus,
         `❌ API de pesquisa respondeu com status ${apiStatus}.\n` +
@@ -149,57 +161,39 @@ test.describe(`[${TARGET_ENV}] 2. Pesquisa — Resultados da BD`, () => {
           `   1. Testar a API directamente: curl "${baseURL}/api/1/datasets/?q=dados"\n` +
           `   2. Verificar logs do Elasticsearch.`,
       ).toBeLessThan(400);
-    } catch {
-      // API não interceptada — verificar dropdown no DOM
-    }
+    });
 
-    // Verificar resultados no DOM (dropdown de autocomplete)
+    // Verificar resultados no DOM
     await page.waitForTimeout(2000);
-
     const results = page.locator(SEARCH_RESULTS);
     const count = await results.count();
 
     if (count > 0) {
-      // Se houver resultados, validar que o contentor existe e tem texto
-      // Às vezes o DSFR/Vue usa classes CSS que o Playwright interpreta como 'hidden'
-      // (ex: height: 0 durante transição). Vamos validar que existe.
-      await expect(results.first()).toBeAttached();
-
-      const text = await results.first().textContent();
-      expect(
-        (text ?? "").trim().length,
-        `❌ Dropdown de resultados está vazio (sem texto).\n` +
-          `   CAUSA: A BD pode estar vazia ou a API retornou 0 resultados.\n` +
-          `   RESOLUÇÃO: curl "${baseURL}/api/1/datasets/?q=dados"`,
-      ).toBeGreaterThan(0);
-    } else if (apiStatus !== null && apiStatus < 400) {
-      // A API respondeu com sucesso mas sem dropdown — pesquisa de página completa
-      // Navegar para página de resultados e verificar
-      await page.keyboard.press("Enter");
-      await page.waitForURL(/\/datasets|\/search/, { timeout: 10_000 });
-
-      const pageCards = page.locator(
-        '.dataset-card, article, [data-cy="dataset-card"], .card',
-      );
-      const cardCount = await pageCards.count();
-
-      expect(
-        cardCount,
-        `❌ Nenhum resultado encontrado após pesquisa de "dados".\n` +
-          `   CAUSA: BD pode estar vazia ou a pesquisa não está a funcionar.\n` +
-          `   RESOLUÇÃO: curl "${baseURL}/api/1/datasets/?q=dados"`,
-      ).toBeGreaterThan(0);
+      await test.step("dropdown de resultados deve conter texto", async () => {
+        await expect(results.first()).toBeAttached();
+        const text = await results.first().textContent();
+        expect(
+          (text ?? "").trim().length,
+          `❌ Dropdown de resultados está vazio (sem texto).\n` +
+            `   CAUSA: A BD pode estar vazia ou a API retornou 0 resultados.\n` +
+            `   RESOLUÇÃO: curl "${baseURL}/api/1/datasets/?q=dados"`,
+        ).toBeGreaterThan(0);
+      });
     } else {
-      throw new Error(
-        `❌ Pesquisa por "dados" não retornou resultados nem abriu dropdown.\n` +
-          `   CAUSA PROVÁVEL:\n` +
-          `   - A API de pesquisa (Elasticsearch) pode estar em baixo.\n` +
-          `   - O componente de autocomplete tem um seletor diferente.\n` +
-          `   RESOLUÇÃO:\n` +
-          `   1. Testar a API: curl "${baseURL}/api/1/datasets/?q=dados"\n` +
-          `   2. Verificar a consola do browser para erros de rede.\n` +
-          `   3. Inspecionar o DOM para o seletor correcto do dropdown.`,
-      );
+      await page.keyboard.press("Enter");
+      await test.step("página de resultados deve conter cards de datasets", async () => {
+        await page.waitForURL(/\/datasets|\/search/, { timeout: 10_000 });
+        const pageCards = page.locator(
+          '.dataset-card, article, [data-cy="dataset-card"], .card',
+        );
+        const cardCount = await pageCards.count();
+        expect(
+          cardCount,
+          `❌ Nenhum resultado encontrado após pesquisa de "dados".\n` +
+            `   CAUSA: BD pode estar vazia ou a pesquisa não está a funcionar.\n` +
+            `   RESOLUÇÃO: curl "${baseURL}/api/1/datasets/?q=dados"`,
+        ).toBeGreaterThan(0);
+      });
     }
   });
 });
@@ -214,70 +208,64 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
     request,
   }) => {
     // 3.1 — Navegar para a listagem de datasets
-    // O dados.gov.pt redireciona / → /pt/, por isso os hrefs têm o prefixo /pt/
-    // Usamos a API para obter o slug do primeiro dataset de forma fiável,
-    // evitando que o seletor capture o link de navegação "/pt/datasets/" (listagem).
     await page.goto("/datasets", { waitUntil: "domcontentloaded" });
 
-    // Extrair apenas links de páginas de detalhe: /[locale]/datasets/<slug>/
-    // Um link de detalhe tem pelo menos um segmento de slug APÓS /datasets/
     const detailHrefs: string[] = await page.evaluate(() => {
       const links = Array.from(
         document.querySelectorAll<HTMLAnchorElement>('a[href*="/datasets/"]'),
       );
       return links
         .map((a) => a.getAttribute("href") ?? "")
-        .filter((href) => {
-          // Capturar apenas URLs com slug: /datasets/<slug> ou /pt/datasets/<slug>
-          // e excluir a listagem pura /datasets/ e /pt/datasets/
-          return /\/datasets\/[^/]+/.test(href) && !/\/datasets\/$/.test(href);
-        });
+        .filter(
+          (href) =>
+            /\/datasets\/[^/]+/.test(href) && !/\/datasets\/$/.test(href),
+        );
     });
 
-    // Fallback: se não encontrar links no DOM, consultar a API directamente
     let datasetUrl: string;
+
     if (detailHrefs.length > 0) {
       const firstHref = detailHrefs[0];
       datasetUrl = firstHref.startsWith("http")
         ? firstHref
         : `${baseURL}${firstHref}`;
     } else {
-      // API não tem prefixo /pt/ — funciona independentemente da localização
       const apiUrl = `${baseURL}/api/1/datasets/?page_size=1&sort=-created`;
-      console.log(
-        `⚠️ Nenhum link de detalhe no DOM. A consultar API: ${apiUrl}`,
-      );
       const apiResp = await request.get(apiUrl, { timeout: 10_000 });
-      expect(
-        apiResp.status(),
-        `❌ API não respondeu ao pedir datasets para o teste de download.\n` +
-          `   RESOLUÇÃO: curl "${apiUrl}"`,
-      ).toBeLessThan(400);
+
+      await test.step("API de datasets responde com HTTP < 400", async () => {
+        expect(
+          apiResp.status(),
+          `❌ API não respondeu ao pedir datasets para o teste de download.\n` +
+            `   RESOLUÇÃO: curl "${apiUrl}"`,
+        ).toBeLessThan(400);
+      });
+
       const apiData = await apiResp.json();
       const slug: string | undefined =
         apiData?.data?.[0]?.slug ?? apiData?.data?.[0]?.id;
-      if (!slug) {
-        throw new Error(
+
+      await test.step("API retornou pelo menos um dataset", async () => {
+        expect(
+          slug,
           `❌ Nenhum dataset encontrado via API (${apiUrl}).\n` +
             `   CAUSA: A base de dados pode estar vazia.`,
-        );
-      }
+        ).toBeTruthy();
+      });
+
       datasetUrl = `${baseURL}/pt/datasets/${slug}/`;
     }
 
     // 3.2 — Navegar para a página de detalhe do dataset
-    test.info().annotations.push({
-      type: "Dataset URL",
-      description: datasetUrl,
-    });
+    test
+      .info()
+      .annotations.push({ type: "Dataset URL", description: datasetUrl });
     console.log(`📂 [${TARGET_ENV}] Navegando para dataset: ${datasetUrl}`);
 
     await page.goto(datasetUrl, { waitUntil: "domcontentloaded" });
-
-    // Aguardar renderização dos componentes Vue
     await page.waitForTimeout(3000);
 
-    // 3.3 — Localizar link de download (estratégia com fallbacks)
+    // 3.3 — Localizar link de download
     const matomoLinks = page.locator("a.matomo_download");
     const downloadAttrLinks = page.locator("a[download]");
     const anyResourceLinks = page.locator(DOWNLOAD_LINK);
@@ -290,63 +278,58 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
     let linkType = "";
 
     if (matomoCount > 0) {
-      // Caso ideal: ficheiro com rastreio Matomo (recurso tipo ficheiro)
       downloadHref = await matomoLinks.first().getAttribute("href");
       linkType = "matomo_download";
     } else if (downloadAttrCount > 0) {
-      // Fallback: link com atributo download
       downloadHref = await downloadAttrLinks.first().getAttribute("href");
       linkType = "a[download]";
     } else if (anyCount > 0) {
-      // Recursos externos ou serviços OGC (WMS/WFS)
       downloadHref = await anyResourceLinks.first().getAttribute("href");
       linkType = "resource-link (externo/OGC)";
     }
 
-    if (!downloadHref) {
-      // Falha real: nenhum recurso encontrado neste dataset
-      throw new Error(
+    await test.step("dataset deve ter pelo menos um link de recurso", async () => {
+      expect(
+        downloadHref,
         `❌ Nenhum link de recurso encontrado neste dataset.\n` +
           `   Dataset: ${datasetUrl}\n` +
           `   CAUSA PROVÁVEL:\n` +
           `   - O dataset pode não ter recursos associados.\n` +
-          `   - Os componentes Vue podem não ter renderizado (verificar JS na consola).\n` +
+          `   - Os componentes Vue podem não ter renderizado.\n` +
           `   RESOLUÇÃO:\n` +
-          `   1. Verificar recursos do dataset na API: curl "${datasetUrl.replace(/\/datasets\//, "/api/1/datasets/")}"\n` +
+          `   1. Verificar recursos na API: curl "${datasetUrl.replace(/\/datasets\//, "/api/1/datasets/")}"\n` +
           `   2. Garantir que o dataset tem pelo menos um recurso do tipo ficheiro.`,
-      );
-    }
-
-    test.info().annotations.push({
-      type: "Download Link Type",
-      description: linkType,
+      ).toBeTruthy();
     });
+
+    test
+      .info()
+      .annotations.push({ type: "Download Link Type", description: linkType });
     test.info().annotations.push({
       type: "Download Href",
-      description: downloadHref,
+      description: downloadHref ?? "",
     });
 
-    // Validar o formato do URL de download
-    expect(
-      downloadHref,
-      `❌ href "${downloadHref}" não é um URL válido (tipo: ${linkType}).\n` +
-        `   CAUSA: O resource.latest pode estar mal configurado.\n` +
-        `   RESOLUÇÃO: Verificar o recurso na API e o valor de "latest".`,
-    ).toMatch(/^https?:\/\/|\//);
+    await test.step("link de download tem formato URL válido", async () => {
+      expect(
+        downloadHref,
+        `❌ href "${downloadHref}" não é um URL válido (tipo: ${linkType}).\n` +
+          `   CAUSA: O resource.latest pode estar mal configurado.\n` +
+          `   RESOLUÇÃO: Verificar o recurso na API e o valor de "latest".`,
+      ).toMatch(/^https?:\/\//);
+    });
 
-    // 3.4 — Validar que o URL de download responde (HEAD request)
-    const absoluteHref = downloadHref.startsWith("http")
-      ? downloadHref
+    // 3.4 — Validar HEAD request
+    const absoluteHref = (downloadHref ?? "").startsWith("http")
+      ? downloadHref!
       : `${baseURL}${downloadHref}`;
 
-    // Apenas validar HEAD para ficheiros diretos (não serviços OGC externos)
     if (
       linkType !== "resource-link (externo/OGC)" ||
       absoluteHref.includes(baseURL ?? "")
     ) {
-      let headResponse: Awaited<ReturnType<typeof request.head>>;
-      try {
-        headResponse = await request.head(absoluteHref, {
+      await test.step("URL de download responde com HTTP < 400", async () => {
+        const headResponse = await request.head(absoluteHref, {
           timeout: 15_000,
           headers: {
             "User-Agent":
@@ -354,42 +337,23 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           },
         });
-      } catch (networkErr: unknown) {
-        // Erro de rede real (timeout, ECONNREFUSED) — falha o teste
-        throw new Error(
-          `❌ Falha de rede ao aceder ao URL de download.\n` +
+
+        const httpStatus = headResponse.status();
+        expect(
+          httpStatus,
+          `❌ URL de download retornou status ${httpStatus}.\n` +
             `   URL: ${absoluteHref}\n` +
-            `   ERRO: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}\n` +
-            `   CAUSA: O servidor de ficheiros pode estar inacessível.\n` +
-            `   RESOLUÇÃO: Verificar volume FS e configuração FS_ROOT em udata.cfg.`,
-        );
-      }
-
-      const httpStatus = headResponse.status();
-      console.log(
-        `📡 [${TARGET_ENV}] HEAD ${absoluteHref} → HTTP ${httpStatus}`,
-      );
-
-      // ATENÇÃO: Esta asserção NÃO está num try/catch — se falhar, o teste falha.
-      expect(
-        httpStatus,
-        `❌ URL de download retornou status ${httpStatus}.\n` +
-          `   URL: ${absoluteHref}\n` +
-          `   Tipo: ${linkType}\n` +
-          `   CAUSA: O ficheiro pode não existir no servidor de ficheiros (FS).\n` +
-          `   RESOLUÇÃO:\n` +
-          `   1. Verificar se o ficheiro existe no volume FS.\n` +
-          `   2. Verificar configuração FS_ROOT e FS_PREFIX em udata.cfg.\n` +
-          `   3. Confirmar que o volume está montado correctamente.`,
-      ).toBeLessThan(400);
-
-      console.log(
-        `✅ [${TARGET_ENV}] Download OK (${httpStatus}) — ${linkType}: ${absoluteHref}`,
-      );
+            `   Tipo: ${linkType}\n` +
+            `   CAUSA: O ficheiro pode não existir no servidor de ficheiros (FS).\n` +
+            `   RESOLUÇÃO:\n` +
+            `   1. Verificar se o ficheiro existe no volume FS.\n` +
+            `   2. Verificar configuração FS_ROOT e FS_PREFIX em udata.cfg.\n` +
+            `   3. Confirmar que o volume está montado correctamente.`,
+        ).toBeLessThan(400);
+      });
     } else {
       console.log(
-        `⚠️ [${TARGET_ENV}] Recurso externo/OGC encontrado: ${absoluteHref}\n` +
-          `   Sem validação HEAD para URLs externos.`,
+        `⚠️ [${TARGET_ENV}] Recurso externo/OGC sem validação HEAD: ${absoluteHref}`,
       );
     }
   });
@@ -399,14 +363,28 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
 // 4. INTEGRIDADE DE ASSETS — Imagens & CSS
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe(`[${TARGET_ENV}] 4. Integridade de Assets`, () => {
-  /**
-   * Recolhe CSS e imagens de uma página e valida o status HTTP de cada um.
-   */
-  async function validatePageAssets(page: Page, baseURL: string | undefined) {
-    const failedAssets: string[] = [];
-    const checkedAssets: string[] = [];
+  async function collectBrokenImages(page: Page): Promise<string[]> {
+    const images = await page.locator("img:visible").all();
+    const brokenImages: string[] = [];
 
-    // Interceptar todas as respostas de assets
+    for (const img of images) {
+      const src = (await img.getAttribute("src")) ?? "";
+      if (src.startsWith("data:") || src.endsWith(".svg") || !src) continue;
+
+      const naturalWidth = await img.evaluate(
+        (el: HTMLImageElement) => el.naturalWidth,
+      );
+      if (naturalWidth === 0) {
+        brokenImages.push(src);
+      }
+    }
+
+    return brokenImages;
+  }
+
+  test("Home Page não tem imagens partidas", async ({ page }) => {
+    const failedAssets: string[] = [];
+
     page.on("response", (response: Response) => {
       const url = response.url();
       const status = response.status();
@@ -422,69 +400,38 @@ test.describe(`[${TARGET_ENV}] 4. Integridade de Assets`, () => {
         url.endsWith(".ico") ||
         url.endsWith(".webp");
 
-      if (isAsset) {
-        checkedAssets.push(`${status} — ${url}`);
-        if (status >= 400) {
-          failedAssets.push(`HTTP ${status}: ${url}`);
-        }
+      if (isAsset && status >= 400) {
+        failedAssets.push(`HTTP ${status}: ${url}`);
       }
     });
-
-    return { failedAssets, checkedAssets };
-  }
-
-  test("Home Page não tem imagens partidas", async ({ page }) => {
-    const { failedAssets } = await validatePageAssets(
-      page,
-      page.context().browser()?.version(),
-    );
 
     await page.goto("/", { waitUntil: "load" });
     await page.waitForTimeout(2000);
 
-    // Verificar imagens via DOM (equivalente ao checkBrokenImages do Cypress)
-    const images = await page.locator("img:visible").all();
-    const brokenImages: string[] = [];
+    const brokenImages = await collectBrokenImages(page);
 
-    for (const img of images) {
-      const src = (await img.getAttribute("src")) ?? "";
+    await test.step("nenhuma imagem visível deve estar partida", async () => {
+      expect(
+        brokenImages,
+        `❌ ${brokenImages.length} imagem(ns) partida(s) na Home Page:\n` +
+          brokenImages.map((s) => `   ❌ ${s}`).join("\n") +
+          `\n   CAUSA: Ficheiros não existem no FS ou paths incorrectos.\n` +
+          `   RESOLUÇÃO: Verificar configuração FS_ROOT e volume FS montado.`,
+      ).toHaveLength(0);
+    });
 
-      // Ignorar SVGs inline e data URIs
-      if (src.startsWith("data:") || src.endsWith(".svg") || !src) {
-        continue;
-      }
-
-      const naturalWidth = await img.evaluate(
-        (el: HTMLImageElement) => el.naturalWidth,
-      );
-
-      console.log(`Checking image: ${src} (width: ${naturalWidth})`);
-
-      if (naturalWidth === 0) {
-        brokenImages.push(src);
-      }
-    }
-
-    expect(
-      brokenImages,
-      `❌ ${brokenImages.length} imagem(ns) partida(s) na Home Page:\n` +
-        brokenImages.map((s) => `   - ${s}`).join("\n") +
-        `\n   CAUSA: Ficheiros não existem no servidor de ficheiros (FS) ou paths incorrectos.\n` +
-        `   RESOLUÇÃO: Verificar configuração FS_ROOT e volume FS montado.`,
-    ).toHaveLength(0);
-
-    // Falhas de assets via network também são reportadas
-    if (failedAssets.length > 0) {
-      console.warn(
-        `⚠️ ${failedAssets.length} asset(s) com erro na Home Page:\n` +
-          failedAssets.map((a) => `   ${a}`).join("\n"),
-      );
-    }
+    await test.step("nenhum asset (CSS/imagem) deve ter erro HTTP", async () => {
+      expect(
+        failedAssets,
+        `❌ ${failedAssets.length} asset(s) com erro de rede na Home Page:\n` +
+          failedAssets.map((a) => `   ❌ ${a}`).join("\n") +
+          `\n   CAUSA: Ficheiros CSS/JS ou imagens em falta ou caminhos inválidos.`,
+      ).toHaveLength(0);
+    });
   });
 
   test("Páginas carregam folhas de estilo CSS correctamente", async ({
     page,
-    baseURL,
   }) => {
     const cssErrors: string[] = [];
 
@@ -502,55 +449,44 @@ test.describe(`[${TARGET_ENV}] 4. Integridade de Assets`, () => {
 
     await page.goto("/", { waitUntil: "load" });
 
-    expect(
-      cssErrors,
-      `❌ ${cssErrors.length} ficheiro(s) CSS com erro na Home Page:\n` +
-        cssErrors.map((e) => `   - ${e}`).join("\n") +
-        `\n   CAUSA: Build de assets inválido ou deploy incompleto.\n` +
-        `   RESOLUÇÃO:\n` +
-        `   1. Verificar o deploy: os assets foram publicados?\n` +
-        `   2. Executar: npm run build e re-fazer deploy.\n` +
-        `   3. Verificar a configuração do servidor de assets estáticos.`,
-    ).toHaveLength(0);
+    await test.step("nenhum ficheiro CSS deve retornar erro HTTP", async () => {
+      expect(
+        cssErrors,
+        `❌ ${cssErrors.length} ficheiro(s) CSS com erro na Home Page:\n` +
+          cssErrors.map((e) => `   ❌ ${e}`).join("\n") +
+          `\n   CAUSA: Build de assets inválido ou deploy incompleto.\n` +
+          `   RESOLUÇÃO:\n` +
+          `   1. Verificar o deploy: os assets foram publicados?\n` +
+          `   2. Executar: npm run build e re-fazer deploy.\n` +
+          `   3. Verificar a configuração do servidor de assets estáticos.`,
+      ).toHaveLength(0);
+    });
   });
 
   test("Página /datasets não tem imagens partidas", async ({ page }) => {
     await page.goto("/datasets", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
 
-    const images = await page.locator("img:visible").all();
-    const brokenImages: string[] = [];
+    const brokenImages = await collectBrokenImages(page);
 
-    for (const img of images) {
-      const src = (await img.getAttribute("src")) ?? "";
-      if (src.startsWith("data:") || src.endsWith(".svg") || !src) continue;
-
-      const naturalWidth = await img.evaluate(
-        (el: HTMLImageElement) => el.naturalWidth,
-      );
-      if (naturalWidth === 0) {
-        brokenImages.push(src);
-      }
-    }
-
-    expect(
-      brokenImages,
-      `❌ ${brokenImages.length} imagem(ns) partida(s) em /datasets:\n` +
-        brokenImages.map((s) => `   - ${s}`).join("\n") +
-        `\n   CAUSA: Logos de organizações ou imagens de datasets não existem no FS.\n` +
-        `   RESOLUÇÃO: Verificar se os ficheiros existem no volume FS (/s/ prefix).`,
-    ).toHaveLength(0);
+    await test.step("nenhuma imagem visível deve estar partida em /datasets", async () => {
+      expect(
+        brokenImages,
+        `❌ ${brokenImages.length} imagem(ns) partida(s) em /datasets:\n` +
+          brokenImages.map((s) => `   ❌ ${s}`).join("\n") +
+          `\n   CAUSA: Logos de organizações ou imagens de datasets não existem no FS.\n` +
+          `   RESOLUÇÃO: Verificar se os ficheiros existem no volume FS (/s/ prefix).`,
+      ).toHaveLength(0);
+    });
   });
 
   test("Assets estáticos do volume FS são servidos (/s/)", async ({
     page,
     request,
-    baseURL,
   }) => {
     await page.goto("/datasets", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
 
-    // Extrair todos os srcs de imagens com prefixo /s/ (FS volume)
     const fsSrcs = await page.evaluate(() => {
       const imgs = Array.from(document.querySelectorAll('img[src*="/s/"]'));
       return imgs.map((img) => (img as HTMLImageElement).src);
@@ -558,37 +494,32 @@ test.describe(`[${TARGET_ENV}] 4. Integridade de Assets`, () => {
 
     if (fsSrcs.length === 0) {
       console.log(
-        "⚠️ Nenhuma imagem com prefixo /s/ encontrada em /datasets.\n" +
-          "   Isto pode ser normal se não existirem logos de organizações carregados.",
+        "ℹ️ Nenhuma imagem com prefixo /s/ encontrada em /datasets.\n" +
+          "   Pode ser normal se não existirem logos de organizações carregados.",
       );
       return;
     }
 
-    // Validar cada imagem FS via HEAD request
     const fsErrors: string[] = [];
-
     for (const src of fsSrcs.slice(0, 10)) {
-      // Limitar a 10 para não sobrecarregar
-      try {
-        const res = await request.head(src, { timeout: 10_000 });
-        if (res.status() >= 400) {
-          fsErrors.push(`HTTP ${res.status()}: ${src}`);
-        }
-      } catch {
-        fsErrors.push(`Timeout/Erro: ${src}`);
+      const res = await request.head(src, { timeout: 10_000 });
+      if (res.status() >= 400) {
+        fsErrors.push(`HTTP ${res.status()}: ${src}`);
       }
     }
 
-    expect(
-      fsErrors,
-      `❌ ${fsErrors.length} ficheiro(s) FS inacessível(is):\n` +
-        fsErrors.map((e) => `   - ${e}`).join("\n") +
-        `\n   CAUSA: Ficheiros não existem no volume FS ou path incorrecto.\n` +
-        `   RESOLUÇÃO:\n` +
-        `   1. Verificar: ls -la $FS_ROOT\n` +
-        `   2. Verificar FS_ROOT e FS_PREFIX em udata.cfg.\n` +
-        `   3. Confirmar que o volume está montado correctamente.`,
-    ).toHaveLength(0);
+    await test.step("assets do volume FS (/s/) devem responder com HTTP < 400", async () => {
+      expect(
+        fsErrors,
+        `❌ ${fsErrors.length} ficheiro(s) FS inacessível(is):\n` +
+          fsErrors.map((e) => `   ❌ ${e}`).join("\n") +
+          `\n   CAUSA: Ficheiros não existem no volume FS ou path incorrecto.\n` +
+          `   RESOLUÇÃO:\n` +
+          `   1. Verificar: ls -la $FS_ROOT\n` +
+          `   2. Verificar FS_ROOT e FS_PREFIX em udata.cfg.\n` +
+          `   3. Confirmar que o volume está montado correctamente.`,
+      ).toHaveLength(0);
+    });
   });
 });
 
@@ -597,30 +528,15 @@ test.describe(`[${TARGET_ENV}] 4. Integridade de Assets`, () => {
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
   const RESET_PATH = "/pt/reset/?next=%2Fpt%2Flogin%2F";
-
-  /**
-   * Email de teste para o fluxo de reset.
-   * Configurar via variável de ambiente TEST_RESET_EMAIL para ambientes CI.
-   * Exemplo: TEST_RESET_EMAIL=admin@dados.gov.pt npm run test:smoke
-   *
-   * NOTA: O udata responde com a mesma mensagem de sucesso independentemente
-   * de o email existir ou não (medida de segurança anti-enumeração).
-   * Portanto, qualquer email com formato válido serve para o smoke test.
-   */
   const TEST_EMAIL = process.env.TEST_RESET_EMAIL ?? "smoke-test@dados.gov.pt";
-
-  /** Mensagem de sucesso configurada em udata.cfg (SECURITY_MSG_PASSWORD_RESET_REQUEST) */
   const SUCCESS_MSG_PATTERN =
     /instruções para redefinir|sent.*password|password.*reset|reset.*enviado|instruções.*enviadas/i;
 
-  // ── Abordagem 2: Interceptar o POST e validar a resposta HTTP ─────────────
   test("Abordagem 2 — POST de reset responde com HTTP 2xx ou 3xx", async ({
     page,
-    baseURL,
   }) => {
     await page.goto(RESET_PATH, { waitUntil: "domcontentloaded" });
 
-    // Registar o próximo POST ao endpoint de reset antes de submeter
     const responsePromise = page.waitForResponse(
       (res) =>
         res.request().method() === "POST" &&
@@ -628,39 +544,46 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
       { timeout: 15_000 },
     );
 
-    // Preencher e submeter
     const emailInput = page.locator(
       'input[type="email"], input[name="email"], input[id*="email"]',
     );
-    await emailInput.first().click();
-    await emailInput.first().pressSequentially(TEST_EMAIL, { delay: 30 });
-    await emailInput.first().press("Tab");
 
-    // O botão é `disabled` por defeito e ativado pelo callback do reCAPTCHA (data-callback="enableBtn").
-    // Em ambiente de teste, chamamos enableBtn() directamente via JS para evitar o CAPTCHA.
-    await page.evaluate(() => {
-      const w = window as unknown as { enableBtn?: () => void };
-      if (typeof w.enableBtn === "function") w.enableBtn();
+    await test.step("preencher campo de email", async () => {
+      await emailInput.first().click();
+      await emailInput.first().pressSequentially(TEST_EMAIL, { delay: 30 });
+      await emailInput.first().press("Tab");
     });
 
-    // O botão é `disabled` por defeito e o Vue ativa-o após validar o email.
-    // Aguardar que o botão fique enabled antes de clicar.
+    await test.step("activar botão de submit (bypass reCAPTCHA)", async () => {
+      await page.evaluate(() => {
+        const w = window as unknown as { enableBtn?: () => void };
+        if (typeof w.enableBtn === "function") w.enableBtn();
+      });
+    });
+
     const submitBtn = page
       .locator('#submit, button[type="submit"], input[type="submit"]')
       .first();
-    await submitBtn.waitFor({ state: "visible", timeout: 5_000 });
-    await expect(submitBtn).toBeEnabled({ timeout: 8_000 });
+
+    await test.step("botão de submit deve ficar activo", async () => {
+      await submitBtn.waitFor({ state: "visible", timeout: 5_000 });
+      await expect(
+        submitBtn,
+        `❌ Botão de submit não ficou activo.\n` +
+          `   CAUSA: O reCAPTCHA ou validação Vue bloqueou a submissão.\n` +
+          `   RESOLUÇÃO: Verificar se enableBtn() existe na página de reset.`,
+      ).toBeEnabled({ timeout: 8_000 });
+    });
+
     await submitBtn.click();
 
-    let postStatus: number | null = null;
-    try {
+    await test.step("POST /reset deve responder com HTTP < 400", async () => {
       const postResponse = await responsePromise;
-      postStatus = postResponse.status();
-
+      const postStatus = postResponse.status();
       expect(
         postStatus,
         `❌ POST para reset retornou HTTP ${postStatus} (esperado < 400).\n` +
-          `   URL: ${baseURL}${RESET_PATH}\n` +
+          `   Ambiente: ${TARGET_ENV}\n` +
           `   Email usado: ${TEST_EMAIL}\n` +
           `   CAUSA PROVÁVEL:\n` +
           `   - Configuração SMTP inválida (MAIL_SERVER, MAIL_PORT).\n` +
@@ -669,57 +592,44 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
           `   1. Verificar variáveis MAIL_* no servidor.\n` +
           `   2. Ver logs: docker logs <container> | grep -i mail`,
       ).toBeLessThan(400);
-
-      console.log(
-        `✅ [${TARGET_ENV}] POST /reset → HTTP ${postStatus} (email: ${TEST_EMAIL})`,
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Formulário pode usar fetch/XHR em vez de submit tradicional
-      console.warn(
-        `⚠️ POST de reset não interceptado via waitForResponse: ${msg}\n` +
-          `   Abordagem 1 (mensagem na página) cobre este cenário.`,
-      );
-    }
+    });
   });
 
-  // ── Abordagem 1: Preencher, submeter e verificar mensagem de confirmação ──
   test("Abordagem 1 — POST directo extrai CSRF e verifica resposta do servidor", async ({
     page,
     request,
     baseURL,
   }) => {
-    // A página de reset tem Google reCAPTCHA que bloqueia a submissão via UI.
-    // Estratégia: extrair CSRF token da página e POSTar directamente,
-    // bypassando o reCAPTCHA (token vazio = rejeitado server-side via UI,
-    // mas o HTTP endpoint apenas valida CSRF — mesma resposta para qualquer email).
-
-    // 1. Carregar a página para obter CSRF e cookies
     const pageResp = await page.goto(RESET_PATH, {
       waitUntil: "domcontentloaded",
     });
-    expect(pageResp?.status(), "❌ Página de reset não carregou.").toBeLessThan(
-      400,
-    );
 
-    // 2. Extrair CSRF token
+    await test.step("página de reset carrega com HTTP < 400", async () => {
+      expect(
+        pageResp?.status(),
+        `❌ Página de reset não carregou (HTTP ${pageResp?.status()}).\n` +
+          `   RESOLUÇÃO: Verificar se o endpoint ${RESET_PATH} existe.`,
+      ).toBeLessThan(400);
+    });
+
     const csrfToken =
       (await page
         .locator('input[name="csrf_token"]')
         .first()
         .getAttribute("value")) ?? "";
 
-    // 3. Campo email existe?
-    await expect(
-      page.locator('input[type="email"], input[name="email"]').first(),
-      `❌ Campo de email não encontrado em ${RESET_PATH}.`,
-    ).toBeVisible();
+    await test.step("campo de email deve estar visível na página de reset", async () => {
+      await expect(
+        page.locator('input[type="email"], input[name="email"]').first(),
+        `❌ Campo de email não encontrado em ${RESET_PATH}.\n` +
+          `   CAUSA: O template da página de reset pode ter mudado.`,
+      ).toBeVisible();
+    });
 
     console.log(
       `📧 [${TARGET_ENV}] A enviar POST de reset para: ${TEST_EMAIL}`,
     );
 
-    // 4. POST directo com CSRF (bypass reCAPTCHA)
     const resetUrl = (baseURL ?? "").replace(/\/$/, "") + "/pt/reset/";
     const cookies = await page.context().cookies();
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
@@ -739,25 +649,21 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
 
     const postStatus = postResp.status();
     const responseBody = await postResp.text();
-    console.log(`📡 [${TARGET_ENV}] POST ${resetUrl} → HTTP ${postStatus}`);
-
-    // 5. Sucesso: HTTP < 400 OU corpo contém mensagem de confirmação
     const bodyOk = SUCCESS_MSG_PATTERN.test(responseBody);
     const statusOk = postStatus < 400;
 
-    if (statusOk)
-      console.log(`✅ [${TARGET_ENV}] POST reset HTTP ${postStatus} OK`);
-    if (bodyOk)
-      console.log(`✅ [${TARGET_ENV}] Mensagem de confirmação na resposta.`);
+    console.log(`📡 [${TARGET_ENV}] POST ${resetUrl} → HTTP ${postStatus}`);
 
-    expect(
-      statusOk || bodyOk,
-      `❌ POST de reset falhou.\n` +
-        `   URL: ${resetUrl}\n` +
-        `   HTTP: ${postStatus}\n` +
-        `   Email: ${TEST_EMAIL}\n` +
-        `   CAUSA: CSRF inválido ou Flask-Security mal configurado.\n` +
-        `   RESOLUÇÃO: docker logs <udata> | grep -i "reset|csrf|security"`,
-    ).toBe(true);
+    await test.step("POST directo deve retornar HTTP < 400 ou mensagem de confirmação", async () => {
+      expect(
+        statusOk || bodyOk,
+        `❌ POST de reset falhou.\n` +
+          `   URL: ${resetUrl}\n` +
+          `   HTTP: ${postStatus}\n` +
+          `   Email: ${TEST_EMAIL}\n` +
+          `   CAUSA: CSRF inválido ou Flask-Security mal configurado.\n` +
+          `   RESOLUÇÃO: docker logs <udata> | grep -i "reset|csrf|security"`,
+      ).toBe(true);
+    });
   });
 });
