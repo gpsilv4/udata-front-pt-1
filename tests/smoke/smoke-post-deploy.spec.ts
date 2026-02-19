@@ -9,6 +9,13 @@
  *   3. Download de recurso de um dataset
  *   4. Integridade de assets (imagens e CSS)
  *   5. Redefinição de palavra-passe
+ *   6. Organizações — listagem carrega e contém cards
+ *   7. Reutilizações — listagem carrega e contém cards
+ *   8. API REST — endpoints respondem com JSON válido
+ *   9. Navegação — links internos (nav + footer) acessíveis
+ *  10. Dashboard / Estatísticas — página carrega com indicadores
+ *  11. Páginas estáticas — Sobre, Termos, Acessibilidade, etc.
+ *  12. Formulário de Contacto — página renderiza com campos
  *
  * ─── Propagação de Erro (Bubble-Up) ─────────────────────────────────────────
  *
@@ -664,6 +671,299 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
           `   CAUSA: CSRF inválido ou Flask-Security mal configurado.\n` +
           `   RESOLUÇÃO: docker logs <udata> | grep -i "reset|csrf|security"`,
       ).toBe(true);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ORGANIZAÇÕES — Listagem
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 6. Organizações`, () => {
+  test("Página de organizações carrega e contém cards", async ({
+    page,
+    baseURL,
+  }) => {
+    const response = await page.goto("/pt/organizations/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    await test.step("status HTTP deve ser < 400", async () => {
+      expect(
+        response?.status(),
+        `❌ Página de organizações não respondeu correctamente em ${TARGET_ENV} (${baseURL}/pt/organizations/).\n` +
+          `   CAUSA: A rota /pt/organizations/ pode não existir ou o servidor está em baixo.\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}/pt/organizations/`,
+      ).toBeLessThan(400);
+    });
+
+    await test.step("listagem contém pelo menos 1 card de organização", async () => {
+      await page.waitForSelector(".fr-tile", { timeout: 15_000 });
+      const cards = page.locator(".fr-tile");
+      const count = await cards.count();
+      expect(
+        count,
+        `❌ Nenhum card de organização encontrado em ${TARGET_ENV}.\n` +
+          `   CAUSA: A base de dados pode não ter organizações ou o template pode ter mudado.\n` +
+          `   RESOLUÇÃO: Verificar /api/1/organizations/?page_size=1`,
+      ).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. REUTILIZAÇÕES — Listagem
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 7. Reutilizações`, () => {
+  test("Página de reutilizações carrega e contém cards", async ({
+    page,
+    baseURL,
+  }) => {
+    const response = await page.goto("/pt/reuses/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    await test.step("status HTTP deve ser < 400", async () => {
+      expect(
+        response?.status(),
+        `❌ Página de reutilizações não respondeu correctamente em ${TARGET_ENV} (${baseURL}/pt/reuses/).\n` +
+          `   CAUSA: A rota /pt/reuses/ pode não existir ou o servidor está em baixo.\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}/pt/reuses/`,
+      ).toBeLessThan(400);
+    });
+
+    await test.step("listagem contém pelo menos 1 card de reutilização", async () => {
+      await page.waitForSelector("article.fr-card", { timeout: 15_000 });
+      const cards = page.locator("article.fr-card");
+      const count = await cards.count();
+      expect(
+        count,
+        `❌ Nenhum card de reutilização encontrado em ${TARGET_ENV}.\n` +
+          `   CAUSA: A base de dados pode não ter reutilizações ou o template mudou.\n` +
+          `   RESOLUÇÃO: Verificar /api/1/reuses/?page_size=1`,
+      ).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. API REST — Endpoints respondem com JSON
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 8. API REST`, () => {
+  const API_ENDPOINTS = [
+    { path: "/api/1/datasets/?page_size=1", name: "Datasets" },
+    { path: "/api/1/organizations/?page_size=1", name: "Organizações" },
+    { path: "/api/1/reuses/?page_size=1", name: "Reutilizações" },
+  ];
+
+  test("Raiz da API responde com HTTP < 400", async ({ request, baseURL }) => {
+    const response = await request.get("/api/1/");
+    await test.step("status HTTP deve ser < 400", async () => {
+      expect(
+        response.status(),
+        `❌ Raiz da API não respondeu correctamente em ${TARGET_ENV}.\n` +
+          `   URL: ${baseURL}/api/1/\n` +
+          `   HTTP: ${response.status()}\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}/api/1/`,
+      ).toBeLessThan(400);
+    });
+  });
+
+  for (const endpoint of API_ENDPOINTS) {
+    test(`Endpoint ${endpoint.name} responde com JSON`, async ({
+      request,
+      baseURL,
+    }) => {
+      const response = await request.get(endpoint.path);
+
+      await test.step("status HTTP deve ser < 400", async () => {
+        expect(
+          response.status(),
+          `❌ API ${endpoint.name} não respondeu correctamente em ${TARGET_ENV}.\n` +
+            `   URL: ${baseURL}${endpoint.path}\n` +
+            `   HTTP: ${response.status()}\n` +
+            `   RESOLUÇÃO: curl -s ${baseURL}${endpoint.path} | head -c 200`,
+        ).toBeLessThan(400);
+      });
+
+      await test.step("Content-Type deve conter 'json'", async () => {
+        const contentType = response.headers()["content-type"] || "";
+        expect(
+          contentType,
+          `❌ API ${endpoint.name} não retornou JSON em ${TARGET_ENV}.\n` +
+            `   Content-Type: ${contentType}\n` +
+            `   CAUSA: O endpoint pode estar a devolver HTML (erro) em vez de JSON.\n` +
+            `   RESOLUÇÃO: curl -sI ${baseURL}${endpoint.path} | grep content-type`,
+        ).toContain("json");
+      });
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. NAVEGAÇÃO — Links internos (nav + footer) acessíveis
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 9. Navegação e Links Internos`, () => {
+  test("Links principais da navegação estão acessíveis", async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const NAV_PATHS = [
+      "/pt/datasets/",
+      "/pt/dataservices/",
+      "/pt/reuses/",
+      "/pt/organizations/",
+    ];
+
+    for (const path of NAV_PATHS) {
+      await test.step(`HEAD ${path} responde com HTTP < 400`, async () => {
+        const resp = await request.head(path);
+        expect(
+          resp.status(),
+          `❌ Link de navegação ${path} não está acessível em ${TARGET_ENV}.\n` +
+            `   HTTP: ${resp.status()}\n` +
+            `   RESOLUÇÃO: curl -I ${baseURL}${path}`,
+        ).toBeLessThan(400);
+      });
+    }
+  });
+
+  test("Links do footer estão acessíveis", async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const FOOTER_PATHS = [
+      "/pt/pages/faqs/about_dadosgov",
+      "/pt/pages/faqs/terms",
+      "/pt/pages/faqs/acessibilidade",
+      "/pt/pages/api-tutorial",
+      "/pt/dashboard/",
+    ];
+
+    for (const path of FOOTER_PATHS) {
+      await test.step(`GET ${path} responde com HTTP < 400`, async () => {
+        const resp = await request.get(path);
+        expect(
+          resp.status(),
+          `❌ Link do footer ${path} não está acessível em ${TARGET_ENV}.\n` +
+            `   HTTP: ${resp.status()}\n` +
+            `   RESOLUÇÃO: curl -I ${baseURL}${path}`,
+        ).toBeLessThan(400);
+      });
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. DASHBOARD / ESTATÍSTICAS
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 10. Dashboard — Estatísticas`, () => {
+  test("Página de dashboard carrega com indicadores", async ({
+    page,
+    baseURL,
+  }) => {
+    const response = await page.goto("/pt/dashboard/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    await test.step("status HTTP deve ser < 400", async () => {
+      expect(
+        response?.status(),
+        `❌ Dashboard não respondeu correctamente em ${TARGET_ENV} (${baseURL}/pt/dashboard/).\n` +
+          `   CAUSA: A rota /pt/dashboard/ pode não existir.\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}/pt/dashboard/`,
+      ).toBeLessThan(400);
+    });
+
+    await test.step("página contém pelo menos um indicador numérico", async () => {
+      const body = await page.textContent("body");
+      const hasNumbers = /\d+/.test(body || "");
+      expect(
+        hasNumbers,
+        `❌ Dashboard não contém indicadores numéricos em ${TARGET_ENV}.\n` +
+          `   CAUSA: Os contadores podem não estar a carregar (JS error ou API em baixo).\n` +
+          `   RESOLUÇÃO: Abrir ${baseURL}/pt/dashboard/ num browser e verificar a consola.`,
+      ).toBe(true);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. PÁGINAS ESTÁTICAS — Sobre, Termos, Acessibilidade, etc.
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 11. Páginas Estáticas`, () => {
+  const STATIC_PAGES = [
+    { path: "/pt/pages/faqs/about_dadosgov", label: "Sobre nós" },
+    { path: "/pt/pages/faqs/terms", label: "Termos de utilização" },
+    { path: "/pt/pages/faqs/acessibilidade", label: "Acessibilidade" },
+    { path: "/pt/pages/api-tutorial", label: "API Tutorial" },
+    { path: "/pt/pages/faqs/licenses/", label: "Licenças" },
+  ];
+
+  test("Páginas legais e informativas respondem com HTTP < 400", async ({
+    request,
+    baseURL,
+  }) => {
+    for (const pg of STATIC_PAGES) {
+      await test.step(`${pg.label} (${pg.path}) responde com HTTP < 400`, async () => {
+        const resp = await request.get(pg.path);
+        expect(
+          resp.status(),
+          `❌ Página estática "${pg.label}" não acessível em ${TARGET_ENV}.\n` +
+            `   URL: ${baseURL}${pg.path}\n` +
+            `   HTTP: ${resp.status()}\n` +
+            `   RESOLUÇÃO: curl -I ${baseURL}${pg.path}`,
+        ).toBeLessThan(400);
+      });
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. FORMULÁRIO DE CONTACTO
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe(`[${TARGET_ENV}] 12. Formulário de Contacto`, () => {
+  test("Página de contacto carrega com formulário", async ({
+    page,
+    baseURL,
+  }) => {
+    const response = await page.goto("/pt/contact/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    await test.step("status HTTP deve ser < 400", async () => {
+      expect(
+        response?.status(),
+        `❌ Página de contacto não respondeu correctamente em ${TARGET_ENV} (${baseURL}/pt/contact/).\n` +
+          `   CAUSA: A rota /pt/contact/ pode não existir.\n` +
+          `   RESOLUÇÃO: curl -I ${baseURL}/pt/contact/`,
+      ).toBeLessThan(400);
+    });
+
+    await test.step("formulário contém campos obrigatórios", async () => {
+      const form = page.locator("form");
+      const formCount = await form.count();
+      expect(
+        formCount,
+        `❌ Nenhum formulário encontrado na página de contacto em ${TARGET_ENV}.\n` +
+          `   CAUSA: A página pode não ter um <form> ou o template mudou.\n` +
+          `   RESOLUÇÃO: Inspecionar ${baseURL}/pt/contact/ no browser.`,
+      ).toBeGreaterThan(0);
+
+      // Verificar presença de campos essenciais (input ou textarea)
+      const inputs = page.locator("form input, form textarea, form select");
+      const inputCount = await inputs.count();
+      expect(
+        inputCount,
+        `❌ Formulário de contacto não tem campos de input em ${TARGET_ENV}.\n` +
+          `   CAUSA: Os campos do formulário podem não estar a renderizar.\n` +
+          `   RESOLUÇÃO: Verificar o HTML do formulário em ${baseURL}/pt/contact/`,
+      ).toBeGreaterThanOrEqual(2);
     });
   });
 });
