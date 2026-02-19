@@ -344,8 +344,9 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
       linkType !== "resource-link (externo/OGC)" ||
       absoluteHref.includes(baseURL ?? "")
     ) {
+      let headResponse: Awaited<ReturnType<typeof request.head>>;
       try {
-        const headResponse = await request.head(absoluteHref, {
+        headResponse = await request.head(absoluteHref, {
           timeout: 15_000,
           headers: {
             "User-Agent":
@@ -353,29 +354,38 @@ test.describe(`[${TARGET_ENV}] 3. Download de Recurso de Dataset`, () => {
               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           },
         });
-
-        expect(
-          headResponse.status(),
-          `❌ URL de download retornou status ${headResponse.status()}.\n` +
+      } catch (networkErr: unknown) {
+        // Erro de rede real (timeout, ECONNREFUSED) — falha o teste
+        throw new Error(
+          `❌ Falha de rede ao aceder ao URL de download.\n` +
             `   URL: ${absoluteHref}\n` +
-            `   CAUSA: O ficheiro pode não existir no servidor de ficheiros (FS).\n` +
-            `   RESOLUÇÃO:\n` +
-            `   1. Verificar se o ficheiro existe no volume FS.\n` +
-            `   2. Verificar configuração FS_ROOT e FS_PREFIX em udata.cfg.\n` +
-            `   3. Confirmar que o volume está montado correctamente.`,
-        ).toBeLessThan(400);
-
-        console.log(
-          `✅ [${TARGET_ENV}] Download OK (${headResponse.status()}) — ${linkType}: ${absoluteHref}`,
-        );
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        // Avisar mas não falhar em redirect (301/302 para HTTPS)
-        console.warn(
-          `⚠️ HEAD request para "${absoluteHref}" falhou: ${errorMsg}\n` +
-            `   Pode ser redirect — verificar manualmente.`,
+            `   ERRO: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}\n` +
+            `   CAUSA: O servidor de ficheiros pode estar inacessível.\n` +
+            `   RESOLUÇÃO: Verificar volume FS e configuração FS_ROOT em udata.cfg.`,
         );
       }
+
+      const httpStatus = headResponse.status();
+      console.log(
+        `📡 [${TARGET_ENV}] HEAD ${absoluteHref} → HTTP ${httpStatus}`,
+      );
+
+      // ATENÇÃO: Esta asserção NÃO está num try/catch — se falhar, o teste falha.
+      expect(
+        httpStatus,
+        `❌ URL de download retornou status ${httpStatus}.\n` +
+          `   URL: ${absoluteHref}\n` +
+          `   Tipo: ${linkType}\n` +
+          `   CAUSA: O ficheiro pode não existir no servidor de ficheiros (FS).\n` +
+          `   RESOLUÇÃO:\n` +
+          `   1. Verificar se o ficheiro existe no volume FS.\n` +
+          `   2. Verificar configuração FS_ROOT e FS_PREFIX em udata.cfg.\n` +
+          `   3. Confirmar que o volume está montado correctamente.`,
+      ).toBeLessThan(400);
+
+      console.log(
+        `✅ [${TARGET_ENV}] Download OK (${httpStatus}) — ${linkType}: ${absoluteHref}`,
+      );
     } else {
       console.log(
         `⚠️ [${TARGET_ENV}] Recurso externo/OGC encontrado: ${absoluteHref}\n` +
@@ -685,12 +695,19 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
     // mas o HTTP endpoint apenas valida CSRF — mesma resposta para qualquer email).
 
     // 1. Carregar a página para obter CSRF e cookies
-    const pageResp = await page.goto(RESET_PATH, { waitUntil: "domcontentloaded" });
-    expect(pageResp?.status(), "❌ Página de reset não carregou.").toBeLessThan(400);
+    const pageResp = await page.goto(RESET_PATH, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(pageResp?.status(), "❌ Página de reset não carregou.").toBeLessThan(
+      400,
+    );
 
     // 2. Extrair CSRF token
     const csrfToken =
-      (await page.locator('input[name="csrf_token"]').first().getAttribute("value")) ?? "";
+      (await page
+        .locator('input[name="csrf_token"]')
+        .first()
+        .getAttribute("value")) ?? "";
 
     // 3. Campo email existe?
     await expect(
@@ -698,7 +715,9 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
       `❌ Campo de email não encontrado em ${RESET_PATH}.`,
     ).toBeVisible();
 
-    console.log(`📧 [${TARGET_ENV}] A enviar POST de reset para: ${TEST_EMAIL}`);
+    console.log(
+      `📧 [${TARGET_ENV}] A enviar POST de reset para: ${TEST_EMAIL}`,
+    );
 
     // 4. POST directo com CSRF (bypass reCAPTCHA)
     const resetUrl = (baseURL ?? "").replace(/\/$/, "") + "/pt/reset/";
@@ -726,8 +745,10 @@ test.describe(`[${TARGET_ENV}] 5. Redefinição de Palavra-passe`, () => {
     const bodyOk = SUCCESS_MSG_PATTERN.test(responseBody);
     const statusOk = postStatus < 400;
 
-    if (statusOk) console.log(`✅ [${TARGET_ENV}] POST reset HTTP ${postStatus} OK`);
-    if (bodyOk) console.log(`✅ [${TARGET_ENV}] Mensagem de confirmação na resposta.`);
+    if (statusOk)
+      console.log(`✅ [${TARGET_ENV}] POST reset HTTP ${postStatus} OK`);
+    if (bodyOk)
+      console.log(`✅ [${TARGET_ENV}] Mensagem de confirmação na resposta.`);
 
     expect(
       statusOk || bodyOk,
