@@ -8,12 +8,14 @@ import { defineConfig, devices } from "@playwright/test";
 //   TARGET_ENV=PPR npx playwright test --config playwright.config.ts
 //   TARGET_ENV=TST npx playwright test --config playwright.config.ts
 //   TARGET_ENV=DEV npx playwright test --config playwright.config.ts
+//   TARGET_ENV=LOCAL npx playwright test --config playwright.config.ts
 // ─────────────────────────────────────────────────────────────────────────────
 const ENVIRONMENTS: Record<string, string> = {
   PRD: "https://dados.gov.pt",
   PPR: "https://preprod.dados.gov.pt",
   TST: "http://10.55.37.38",
   DEV: "http://172.31.204.12",
+  LOCAL: "http://dev.local:7000",
 };
 
 const selectedEnv = (process.env.TARGET_ENV || "PRD").toUpperCase();

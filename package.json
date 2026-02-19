@@ -15,6 +15,7 @@
     "test:smoke:ppr": "TARGET_ENV=PPR npx playwright test --config playwright.config.ts",
     "test:smoke:tst": "TARGET_ENV=TST npx playwright test --config playwright.config.ts",
     "test:smoke:dev": "TARGET_ENV=DEV npx playwright test --config playwright.config.ts",
+    "test:smoke:local": "TARGET_ENV=LOCAL npx playwright test --config playwright.config.ts",
     "test:smoke:ui": "TARGET_ENV=PRD npx playwright test --config playwright.config.ts --ui",
     "lighthouse": "lhci autorun",
     "i18n:report": "vue-i18n-extract report",
