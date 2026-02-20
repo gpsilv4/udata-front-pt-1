@@ -53,6 +53,8 @@ export default defineConfig({
 
   // ─── Configuração partilhada pelos projectos ───────────────────────────────
   use: {
+    ignoreHTTPSErrors: true,
+
     baseURL,
 
     // Simular browser real (evita bloqueios de WAF)
