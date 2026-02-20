@@ -9,10 +9,10 @@ import os
 import io
 import logging
 from datetime import datetime
-from flask import request
 
 # Imports necessários para o Monkeypatch
 try:
+    from flask import request
     from udata.core.dataset.models import Checksum, CHECKSUM_TYPES
     from udata.core.storages import api as storage_api
     from udata.core import storages
