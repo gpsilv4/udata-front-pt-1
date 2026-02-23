@@ -13,11 +13,11 @@
 ###   C) POST /api/1/datasets/{dataset}/resources/
 ### =============================================================================
 
-# ── Variáveis globais ──────────────────────────────────────────────────────────
-@base_url   = https://dados.gov.pt
-@dataset_id = 647e04760781901853d36714
-@api_key    = eyJhbGciOiJIUzUxMiJ9.eyJ1c2VyIjoiNjI2YWI1MjMwNzgxOTA5OTE1YjU2OThlIiwidGltZSI6MTY4ODM5ODU1MS44Mjk5NjA4fQ.-fTa2cqfi7EGGxf9k_NsBJb2M9BrRbXaXWtqzHYnWIvagyEGb5StV4JuV8A2snC3D5HGhLn3eeZeOjnV88UgCg
-@boundary   = ----XSSTestBoundary8182430019172427695
+# ── Variáveis (Carregadas automaticamente do ficheiro .env se usares VS Code) ──
+@base_url    = https://dados.gov.pt
+@dataset_id  = {{XSS_TEST_DATASET_ID}}
+@api_key     = {{XSS_TEST_API_KEY}}
+@boundary    = ----XSSTestBoundary8182430019172427695
 
 # Coloca aqui o ID de um recurso existente do dataset para testar o endpoint B
 @resource_id = PREENCHER_COM_RESOURCE_ID

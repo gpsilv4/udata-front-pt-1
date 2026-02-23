@@ -103,3 +103,6 @@ utils/catalog.txt
 
 # AI rules
 GEMINI.md
+
+# Security Tests
+tests_vulnerabilities/resultados_teste.txt

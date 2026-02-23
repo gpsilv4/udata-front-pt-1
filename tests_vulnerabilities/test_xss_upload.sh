@@ -9,12 +9,35 @@
 #   B) POST /api/1/datasets/{dataset}/resources/{rid}/upload/
 # ==============================================================================
 
-API_KEY="********"
-DATASET_ID="*****"
+# Caminho do diretório do script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Carregar variáveis de ambiente do ficheiro .env se existir
+load_env() {
+    local env_file="$1"
+    if [ -f "$env_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Ignorar comentários e linhas vazias
+            [[ "$line" =~ ^#.*$ ]] && continue
+            [[ -z "$line" ]] && continue
+            # Exportar variável
+            export "$line"
+        done < "$env_file"
+    fi
+}
+
+load_env "$SCRIPT_DIR/../.env"
+load_env ".env"
+
+API_KEY="${XSS_TEST_API_KEY}"
+DATASET_ID="${XSS_TEST_DATASET_ID}"
 BASE_URL="https://dados.gov.pt"
 
-# Caminho do SVG — sempre relativo ao diretório do script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "$API_KEY" ] || [ -z "$DATASET_ID" ]; then
+    echo "ERRO: XSS_TEST_API_KEY ou XSS_TEST_DATASET_ID não foram encontradas no ambiente ou no ficheiro .env"
+    exit 1
+fi
+
 SVG_FILE="$SCRIPT_DIR/poisoned.svg"
 RESULTS_FILE="$SCRIPT_DIR/resultados_teste.txt"
 SVG_SIZE=$(wc -c < "$SVG_FILE" | tr -d ' ')
