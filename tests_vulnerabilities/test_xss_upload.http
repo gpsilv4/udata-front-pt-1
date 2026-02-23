@@ -1,0 +1,235 @@
+### =============================================================================
+### Teste de Vulnerabilidade: XSS Persistente via Upload de Ficheiro
+### Relatório: Devoteam Cyber Trust
+### Dataset de teste: https://dados.gov.pt/pt/datasets/teste-1-0/
+###
+### Como usar no VS Code:
+###   1. Instala a extensão "REST Client" (humao.rest-client)
+###   2. Clica em "Send Request" acima de cada pedido
+###
+### Endpoints testados:
+###   A) POST /api/1/datasets/{dataset}/upload/community/
+###   B) POST /api/1/datasets/{dataset}/resources/{rid}/upload/
+###   C) POST /api/1/datasets/{dataset}/resources/
+### =============================================================================
+
+# ── Variáveis globais ──────────────────────────────────────────────────────────
+@base_url   = https://dados.gov.pt
+@dataset_id = 647e04760781901853d36714
+@api_key    = eyJhbGciOiJIUzUxMiJ9.eyJ1c2VyIjoiNjI2YWI1MjMwNzgxOTA5OTE1YjU2OThlIiwidGltZSI6MTY4ODM5ODU1MS44Mjk5NjA4fQ.-fTa2cqfi7EGGxf9k_NsBJb2M9BrRbXaXWtqzHYnWIvagyEGb5StV4JuV8A2snC3D5HGhLn3eeZeOjnV88UgCg
+@boundary   = ----XSSTestBoundary8182430019172427695
+
+# Coloca aqui o ID de um recurso existente do dataset para testar o endpoint B
+@resource_id = PREENCHER_COM_RESOURCE_ID
+
+
+# =============================================================================
+# ENDPOINT A — /api/1/datasets/{dataset}/upload/community/
+# =============================================================================
+
+### [A1] SVG com Content-Type correto → Esperado: 415 BLOQUEADO
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/upload/community/
+Accept: application/json
+X-API-KEY: {{api_key}}
+X-Requested-With: XMLHttpRequest
+Content-Type: multipart/form-data; boundary={{boundary}}
+
+--{{boundary}}
+Content-Disposition: form-data; name="uuid"
+
+a1-uuid-svg-correct-type
+--{{boundary}}
+Content-Disposition: form-data; name="filename"
+
+poisoned.svg
+--{{boundary}}
+Content-Disposition: form-data; name="size"
+
+562
+--{{boundary}}
+Content-Disposition: form-data; name="file"; filename="poisoned.svg"
+Content-Type: image/svg+xml
+
+< ./poisoned.svg
+--{{boundary}}--
+
+###
+
+### [A2] SVG renomeado para .png → Esperado: 415 BLOQUEADO; se 201 = VULNERÁVEL ⚠️
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/upload/community/
+Accept: application/json
+X-API-KEY: {{api_key}}
+X-Requested-With: XMLHttpRequest
+Content-Type: multipart/form-data; boundary={{boundary}}
+
+--{{boundary}}
+Content-Disposition: form-data; name="uuid"
+
+a2-uuid-svg-as-png
+--{{boundary}}
+Content-Disposition: form-data; name="filename"
+
+poisoned.png
+--{{boundary}}
+Content-Disposition: form-data; name="size"
+
+562
+--{{boundary}}
+Content-Disposition: form-data; name="file"; filename="poisoned.png"
+Content-Type: image/png
+
+< ./poisoned.svg
+--{{boundary}}--
+
+###
+
+### [A3] SVG renomeado para .xml → Esperado: 415 BLOQUEADO; se 201 = VULNERÁVEL ⚠️
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/upload/community/
+Accept: application/json
+X-API-KEY: {{api_key}}
+X-Requested-With: XMLHttpRequest
+Content-Type: multipart/form-data; boundary={{boundary}}
+
+--{{boundary}}
+Content-Disposition: form-data; name="uuid"
+
+a3-uuid-svg-as-xml
+--{{boundary}}
+Content-Disposition: form-data; name="filename"
+
+poisoned.xml
+--{{boundary}}
+Content-Disposition: form-data; name="size"
+
+562
+--{{boundary}}
+Content-Disposition: form-data; name="file"; filename="poisoned.xml"
+Content-Type: text/xml
+
+< ./poisoned.svg
+--{{boundary}}--
+
+###
+
+
+# =============================================================================
+# ENDPOINT B — /api/1/datasets/{dataset}/resources/{rid}/upload/
+# Pré-requisito: cria primeiro um recurso (pedido B0) e copia o ID para @resource_id
+# =============================================================================
+
+### [B0] Criar recurso remoto temporário para obter um Resource ID
+# @name createResource
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/
+Accept: application/json
+X-API-KEY: {{api_key}}
+Content-Type: application/json
+
+{
+  "title": "Recurso Teste XSS (temporário)",
+  "url": "https://example.com/test-placeholder",
+  "type": "main",
+  "filetype": "remote"
+}
+
+###
+
+### [B1] SVG com Content-Type correto → Esperado: 415 BLOQUEADO
+# Substitui {{resource_id}} pelo ID retornado em B0
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/{{resource_id}}/upload/
+Accept: application/json
+X-API-KEY: {{api_key}}
+X-Requested-With: XMLHttpRequest
+Content-Type: multipart/form-data; boundary={{boundary}}
+
+--{{boundary}}
+Content-Disposition: form-data; name="file"; filename="poisoned.svg"
+Content-Type: image/svg+xml
+
+< ./poisoned.svg
+--{{boundary}}--
+
+###
+
+### [B2] SVG renomeado para .png → Esperado: 415 BLOQUEADO; se 200/201 = VULNERÁVEL ⚠️
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/{{resource_id}}/upload/
+Accept: application/json
+X-API-KEY: {{api_key}}
+X-Requested-With: XMLHttpRequest
+Content-Type: multipart/form-data; boundary={{boundary}}
+
+--{{boundary}}
+Content-Disposition: form-data; name="file"; filename="poisoned.png"
+Content-Type: image/png
+
+< ./poisoned.svg
+--{{boundary}}--
+
+###
+
+### [B_CLEANUP] Eliminar recurso temporário criado em B0
+DELETE {{base_url}}/api/1/datasets/{{dataset_id}}/resources/{{resource_id}}/
+X-API-KEY: {{api_key}}
+
+###
+
+
+# =============================================================================
+# ENDPOINT C — /api/1/datasets/{dataset}/resources/ (XSS via campos de texto)
+# =============================================================================
+
+### [C1] XSS no campo 'description' do recurso → Esperado: 201 com payload sanitizado
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/
+Accept: application/json
+X-API-KEY: {{api_key}}
+Content-Type: application/json
+
+{
+  "title": "Teste C1 - XSS Description",
+  "url": "https://example.com/c1",
+  "type": "main",
+  "filetype": "remote",
+  "description": "<script>alert('XSS')</script>"
+}
+
+###
+
+### [C2] XSS no campo 'title' do recurso → Esperado: 201 com payload sanitizado
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/
+Accept: application/json
+X-API-KEY: {{api_key}}
+Content-Type: application/json
+
+{
+  "title": "<script>alert('XSS')</script>",
+  "url": "https://example.com/c2",
+  "type": "main",
+  "filetype": "remote"
+}
+
+###
+
+### [C3] XSS via URL com esquema javascript: → Esperado: 400 BLOQUEADO
+POST {{base_url}}/api/1/datasets/{{dataset_id}}/resources/
+Accept: application/json
+X-API-KEY: {{api_key}}
+Content-Type: application/json
+
+{
+  "title": "Teste C3 - javascript: URL",
+  "url": "javascript:alert('XSS')",
+  "type": "main",
+  "filetype": "remote"
+}
+
+###
+
+
+# =============================================================================
+# VERIFICAÇÃO — confirmar autenticação
+# =============================================================================
+
+### Verificar autenticação (deve devolver 200 com dados do utilizador)
+GET {{base_url}}/api/1/me/
+X-API-KEY: {{api_key}}
+
+###
