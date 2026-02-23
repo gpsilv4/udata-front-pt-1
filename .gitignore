@@ -84,6 +84,9 @@ venv/
 cypress/udata-front-e2e.cfg
 cypress/videos
 cypress/screenshots
+test-results/
+playwright-report/
+blob-report/
 data/
 logs/
 saml/
